@@ -38,10 +38,27 @@ pub struct Market {
 }
 
 impl Market {
-    /// Notional in quote atoms for a fill.
+    /// Notional in quote atoms for `base_lots` at `price_in_ticks`.
     pub fn quote_notional(&self, price_in_ticks: u64, base_lots: u64) -> Option<u64> {
         price_in_ticks
             .checked_mul(base_lots)?
             .checked_mul(self.tick_size)
+    }
+
+    /// Price of a single base lot, in quote atoms.
+    ///
+    /// Book prices are integer **tick counts**; the oracle mark is in **quote
+    /// atoms**. Comparing the two directly is only accidentally correct when
+    /// `tick_size == 1`. Always convert through here first.
+    pub fn ticks_to_quote(&self, price_in_ticks: u64) -> Option<u64> {
+        price_in_ticks.checked_mul(self.tick_size)
+    }
+
+    /// Quote-atom price expressed as a tick count, rounded down.
+    pub fn quote_to_ticks(&self, quote_price: u64) -> Option<u64> {
+        if self.tick_size == 0 {
+            return None;
+        }
+        Some(quote_price / self.tick_size)
     }
 }

@@ -27,6 +27,10 @@ const BTC_FEED_ACCOUNT = new PublicKey("4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9V
 
 const MARKET_ID = new BN(Date.now() % 1_000_000);
 const BAND_BPS = 500; // 5%
+// A realistic tick: 0.1 USDC of price granularity. Every earlier test used
+// tick_size = 1, which made tick counts numerically equal to quote atoms and
+// hid a units bug. Anything other than 1 exercises the conversion.
+const TICK_SIZE = 100_000;
 
 const S = (x: string) => Buffer.from(x);
 const le8 = (n: BN) => n.toArrayLike(Buffer, "le", 8);
@@ -59,7 +63,10 @@ async function main() {
   const oracleParams = {
     feedId: Array.from(Buffer.from(BTC_FEED_HEX, "hex")),
     secondaryFeedId: Array(32).fill(0),
-    maxAgeSecs: new BN(120),
+    // Devnet's sponsored feeds publish far less often than mainnet's, so a
+    // production-realistic staleness limit (~30s) rejects them outright. Keep
+    // this generous for devnet and tighten it for mainnet.
+    maxAgeSecs: new BN(24 * 60 * 60),
     maxConfBps: 200,
     maxDeviationBps: 100,
     maxMoveBpsPerInterval: 0, // no band on the mark itself for this test
@@ -70,7 +77,7 @@ async function main() {
   };
 
   await program.methods
-    .initializeMarket(MARKET_ID, new BN(1), new BN(1), 8, 6, 0, 0, { pyth: {} }, oracleParams)
+    .initializeMarket(MARKET_ID, new BN(TICK_SIZE), new BN(1), 8, 6, 0, 0, { pyth: {} }, oracleParams)
     .accounts({
       authority: payer.publicKey,
       market,
@@ -112,8 +119,10 @@ async function main() {
 
   const os_ = await program.account.oracleState.fetch(oracleState);
   const mark = Number(os_.lastPrice);
-  console.log(`mark: ${mark} quote atoms ($${(mark / 1e6).toLocaleString()})`);
-  console.log(`band: ${BAND_BPS}bps -> [${Math.floor(mark * 0.95)}, ${Math.floor(mark * 1.05)}]\n`);
+  const markTicks = Math.floor(mark / TICK_SIZE);
+  console.log(`tick size: ${TICK_SIZE} quote atoms ($${TICK_SIZE / 1e6} per tick)`);
+  console.log(`mark: ${mark} quote atoms ($${(mark / 1e6).toLocaleString()}) = ${markTicks} ticks`);
+  console.log(`band: ${BAND_BPS}bps around the mark\n`);
 
   const place = (price: number, label: string, shouldPass: boolean) =>
     program.methods
@@ -150,12 +159,10 @@ async function main() {
         }
       });
 
-  // The attack: rest a bid at 1 while BTC is worth 64,000.
-  await place(1, "bid @ 1 (the attack)", false);
-  // Just outside the band.
-  await place(Math.floor(mark * 0.9), "bid 10% below mark", false);
-  // Inside the band — must still work, or we broke trading.
-  await place(Math.floor(mark * 0.99), "bid 1% below mark", true);
+  // Prices below are in TICKS, as the book stores them.
+  await place(1, "bid @ 1 tick (the attack)", false);
+  await place(Math.floor(markTicks * 0.9), "bid 10% below mark", false);
+  await place(Math.floor(markTicks * 0.99), "bid 1% below mark", true);
 
   console.log("");
 }

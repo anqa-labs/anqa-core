@@ -2,6 +2,7 @@
 
 use anchor_lang::prelude::*;
 
+use crate::errors::AnqaError;
 use crate::constants::{BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED};
 use crate::state::{Book, Market, OracleKind, OracleParams, OracleState};
 
@@ -54,6 +55,8 @@ pub fn handler(
     oracle_kind: OracleKind,
     oracle: OracleParams,
 ) -> Result<()> {
+    require!(tick_size > 0 && base_lot_size > 0, AnqaError::InvalidTickSize);
+
     let market = &mut ctx.accounts.market;
     market.market_id = market_id;
     market.authority = ctx.accounts.authority.key();

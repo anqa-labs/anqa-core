@@ -62,6 +62,8 @@ pub enum AnqaError {
     TooManyAccounts,
     #[msg("price is outside the oracle band")]
     PriceOutsideBand,
+    #[msg("tick size and lot size must be non-zero")]
+    InvalidTickSize,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

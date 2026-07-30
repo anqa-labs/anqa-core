@@ -85,9 +85,14 @@ pub fn handler<'info>(
     // vault's expense. The book still discovers price — this only bounds how far
     // it may wander from the oracle. Also fails when the mark is stale or the
     // breaker is tripped, which halts trading rather than trading blind.
+    // Book prices are tick counts, the mark is quote atoms. Convert before
+    // comparing — mixing the two is only harmless when tick_size == 1.
+    let order_price_quote = market
+        .ticks_to_quote(price_in_ticks)
+        .ok_or(AnqaError::MathOverflow)?;
     let oracle = &ctx.accounts.oracle_state;
     require!(
-        oracle.within_band(&market.oracle, price_in_ticks)?,
+        oracle.within_band(&market.oracle, order_price_quote)?,
         AnqaError::PriceOutsideBand
     );
     let mark = oracle.live_mark(&market.oracle)?;
@@ -100,10 +105,11 @@ pub fn handler<'info>(
     // fail at match time, after the book has been walked.
     // Size margin off whichever is worse for us — a resting bid far below the
     // mark must not reserve less margin than the exposure it will actually take.
-    let margin_price = price_in_ticks.max(mark);
-    let order_notional = market
-        .quote_notional(margin_price, base_lots)
-        .ok_or(AnqaError::MathOverflow)? as u128;
+    // Both sides of this max are quote atoms.
+    let margin_price_quote = order_price_quote.max(mark);
+    let order_notional = (margin_price_quote as u128)
+        .checked_mul(base_lots as u128)
+        .ok_or(AnqaError::MathOverflow)?;
     let order_margin = order_notional
         .checked_mul(INITIAL_MARGIN_BPS as u128)
         .ok_or(AnqaError::MathOverflow)?
@@ -169,8 +175,11 @@ pub fn handler<'info>(
             // Resting orders were banded when placed, but the mark moves. Check
             // again at execution so a stale resting order cannot be crossed at a
             // price that is now far from reality.
+            let fill_price_quote = market
+                .ticks_to_quote(f.price_in_ticks)
+                .ok_or(AnqaError::MathOverflow)?;
             require!(
-                band_ok(f.price_in_ticks, mark, market.oracle.max_band_bps),
+                band_ok(fill_price_quote, mark, market.oracle.max_band_bps),
                 AnqaError::PriceOutsideBand
             );
 
