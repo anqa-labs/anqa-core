@@ -59,9 +59,29 @@ pub mod anqa_core {
         )
     }
 
-    /// Base layer: claim a trading seat on a market.
-    pub fn claim_seat(ctx: Context<ClaimSeat>) -> Result<()> {
-        instructions::claim_seat::handler(ctx)
+    /// Base layer: stand up the risk engine for a market group.
+    pub fn initialize_risk(
+        ctx: Context<InitializeRisk>,
+        market_id: u64,
+        asset_count: u32,
+        opening_mark: u64,
+    ) -> Result<()> {
+        instructions::initialize_risk::handler(ctx, market_id, asset_count, opening_mark)
+    }
+
+    /// Base layer: create the collateral vault. Never delegated to the rollup.
+    pub fn initialize_vault(ctx: Context<InitializeVault>, market_id: u64) -> Result<()> {
+        instructions::initialize_vault::handler(ctx, market_id)
+    }
+
+    /// Base layer: open a margin account. This is also the trader's seat.
+    pub fn open_portfolio(ctx: Context<OpenPortfolio>) -> Result<()> {
+        instructions::open_portfolio::handler(ctx)
+    }
+
+    /// Base layer: deposit collateral. One of only two instructions that move tokens.
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        instructions::deposit::handler(ctx, amount)
     }
 
     /// Base layer: delegate the book into the ephemeral rollup.
@@ -69,9 +89,12 @@ pub mod anqa_core {
         instructions::delegate_book::handler(ctx, market_id)
     }
 
-    /// Rollup: place an order. Crosses the resting book, then rests the remainder.
-    pub fn place_order(
-        ctx: Context<PlaceOrder>,
+    /// Place an order. Crosses the resting book, then rests the remainder; every
+    /// fill is handed to the risk kernel, which may refuse it.
+    ///
+    /// `remaining_accounts`: one `Portfolio` per maker this order may cross.
+    pub fn place_order<'info>(
+        ctx: Context<'_, '_, 'info, 'info, PlaceOrder<'info>>,
         side: Side,
         order_type: OrderType,
         price_in_ticks: u64,
@@ -86,6 +109,26 @@ pub mod anqa_core {
             base_lots,
             client_order_id,
         )
+    }
+
+    /// Advance mark price and funding for an asset.
+    pub fn crank(
+        ctx: Context<Crank>,
+        asset_index: u32,
+        mark_price: u64,
+        funding_rate_e9: i128,
+    ) -> Result<()> {
+        instructions::crank::handler(ctx, asset_index, mark_price, funding_rate_e9)
+    }
+
+    /// Settle one account against the latest accrual.
+    pub fn refresh_portfolio(ctx: Context<RefreshPortfolio>) -> Result<()> {
+        instructions::crank::refresh_handler(ctx)
+    }
+
+    /// Liquidate an unhealthy account. Permissionless; refuses while healthy.
+    pub fn liquidate(ctx: Context<Liquidate>, asset_index: u32) -> Result<()> {
+        instructions::liquidate::handler(ctx, asset_index)
     }
 
     /// Rollup: cancel one of your resting orders.

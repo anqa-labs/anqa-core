@@ -10,7 +10,22 @@ trader dies. Anqa keeps the guarantees and removes the exposure — a real centr
 limit order book, matching inside a TEE-backed rollup, where the only thing that
 ever becomes public is the fill.
 
-## What works today
+## What works today — a working perp venue on devnet
+
+Not a spot book with perp branding: fills mint **positions**, not token transfers.
+The vault balance is provably unchanged across a trade.
+
+```
+[2] risk engine live — group 734B, asset slots 3887B, 20x max leverage
+[4] maker/taker portfolios opened, 500,000 USDC deposited each
+[6] taker crossed ASK 4 -> positions minted
+    book: fill_count=1 last=4@65000 bids=1 asks=0
+    vault after trade: 1000000 USDC (unchanged — a fill moves no tokens)
+[7] crank: mark 65000 -> 64350, funding accrued
+[8] liquidation refused: NonProgress (account healthy — correct)
+```
+
+## Architecture
 
 Deployed to devnet at `4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j`.
 
@@ -21,8 +36,14 @@ Deployed to devnet at `4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j`.
 - **Zero-copy book** — `bytemuck` Pod accessed through `AccountLoader`. Not a
   preference: a borsh book blows Solana's 4KB BPF stack (the compiler reports
   ~10KB frames). Phoenix is zero-copy for this reason and so is Percolator.
-- **Seats** — per-trader accounts, and the natural unit of read permission inside
-  a private rollup.
+- **Risk engine** — the [Percolator](https://github.com/anqa-labs/percolator)
+  kernel (Apache-2.0, 244 Kani proofs) drives all margin, funding, PnL and
+  liquidation. Anqa supplies what a kernel deliberately does not own: account
+  loading, authorization, oracle authentication, custody, and matching.
+- **Portfolios** — per-trader margin accounts (9.3KB of kernel state), also the
+  trader's seat and the natural unit of read permission inside a private rollup.
+- **Tokens move in exactly two instructions** — `deposit` and `withdraw`. Never
+  on a fill.
 - **Delegation** — the book hands off to the ephemeral rollup validator, after
   which base-chain reads are frozen.
 

@@ -23,6 +23,8 @@ pub struct Market {
     pub paused: bool,
     /// Number of seats claimed on this market.
     pub seat_count: u64,
+    /// Index of this market's asset inside the risk group's slot array.
+    pub asset_index: u32,
     pub bump: u8,
 }
 

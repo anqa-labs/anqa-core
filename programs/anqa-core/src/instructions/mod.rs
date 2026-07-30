@@ -1,13 +1,23 @@
 pub mod cancel_order;
-pub mod claim_seat;
 pub mod commit_book;
+pub mod crank;
+pub mod liquidate;
 pub mod delegate_book;
+pub mod deposit;
+pub mod open_portfolio;
 pub mod initialize_market;
+pub mod initialize_risk;
+pub mod initialize_vault;
 pub mod place_order;
 
 pub use cancel_order::*;
-pub use claim_seat::*;
 pub use commit_book::*;
+pub use crank::*;
+pub use liquidate::*;
 pub use delegate_book::*;
+pub use deposit::*;
+pub use open_portfolio::*;
 pub use initialize_market::*;
+pub use initialize_risk::*;
+pub use initialize_vault::*;
 pub use place_order::*;

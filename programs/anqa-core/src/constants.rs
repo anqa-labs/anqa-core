@@ -19,3 +19,14 @@ pub const NIL: u16 = u16::MAX;
 /// Maximum orders a single taker may cross in one instruction, so matching stays
 /// compute-bounded regardless of book depth.
 pub const MAX_FILLS_PER_ORDER: usize = 8;
+
+/// Assets per risk group: BTC, ETH, SOL. Each is an isolated source domain in
+/// the risk kernel, so losses in one market cannot reach another's backing.
+pub const MAX_ASSETS: usize = 3;
+
+/// PDA seeds for the risk-engine accounts.
+pub const RISK_GROUP_SEED: &[u8] = b"anqa_risk";
+pub const ASSET_SLOTS_SEED: &[u8] = b"anqa_assets";
+pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
+/// Protocol custody for collateral. Never delegated to the rollup.
+pub const VAULT_SEED: &[u8] = b"anqa_vault";

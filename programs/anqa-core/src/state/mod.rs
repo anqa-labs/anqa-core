@@ -1,7 +1,7 @@
 pub mod book;
 pub mod market;
-pub mod seat;
+pub mod risk;
 
 pub use book::*;
 pub use market::*;
-pub use seat::*;
+pub use risk::*;

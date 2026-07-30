@@ -24,4 +24,23 @@ pub enum AnqaError {
     WrongMarket,
     #[msg("arithmetic overflow")]
     MathOverflow,
+    #[msg("risk engine rejected the operation")]
+    RiskEngine,
+    #[msg("insufficient margin for this order")]
+    InsufficientMargin,
+    #[msg("maker portfolio account missing or mismatched")]
+    MakerPortfolioMissing,
+    #[msg("asset index out of range")]
+    BadAssetIndex,
+}
+
+/// Bridge Percolator's error type into Anchor's, preserving the kernel's reason
+/// in the program log. The kernel refuses far more than it accepts — stale
+/// oracle, margin gate, unproven backing — and losing which gate fired would
+/// make failures impossible to debug.
+pub fn map_risk<T>(r: percolator::V16Result<T>) -> anchor_lang::Result<T> {
+    r.map_err(|e| {
+        anchor_lang::prelude::msg!("anqa: risk engine rejected: {:?}", e);
+        AnqaError::RiskEngine.into()
+    })
 }

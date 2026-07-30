@@ -52,6 +52,7 @@ pub fn handler(
     market.maker_rebate_bps = maker_rebate_bps;
     market.paused = false;
     market.seat_count = 0;
+    market.asset_index = 0;
     market.bump = ctx.bumps.market;
 
     let mut book = ctx.accounts.book.load_init()?;

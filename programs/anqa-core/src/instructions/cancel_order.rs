@@ -5,10 +5,10 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{BOOK_SEED, MARKET_SEED, SEAT_SEED};
+use crate::constants::{BOOK_SEED, MARKET_SEED, PORTFOLIO_SEED};
 use crate::errors::AnqaError;
 use crate::events::OrderCancelled;
-use crate::state::{Book, Market, Seat, Side};
+use crate::state::{Book, Market, Portfolio, Side};
 
 #[derive(Accounts)]
 pub struct CancelOrder<'info> {
@@ -26,11 +26,11 @@ pub struct CancelOrder<'info> {
 
     #[account(
         mut,
-        seeds = [SEAT_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump = seat.bump,
-        constraint = seat.market_id == market.market_id @ AnqaError::WrongMarket
+        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        bump,
+        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
     )]
-    pub seat: Account<'info, Seat>,
+    pub portfolio: AccountLoader<'info, Portfolio>,
 }
 
 pub fn handler(ctx: Context<CancelOrder>, side: Side, client_order_id: u64) -> Result<()> {
@@ -39,9 +39,6 @@ pub fn handler(ctx: Context<CancelOrder>, side: Side, client_order_id: u64) -> R
         let mut book = ctx.accounts.book.load_mut()?;
         book.side_mut(side).cancel(&trader_key, client_order_id)?;
     }
-
-    let seat = &mut ctx.accounts.seat;
-    seat.open_orders = seat.open_orders.saturating_sub(1);
 
     emit!(OrderCancelled {
         market_id: ctx.accounts.market.market_id,
