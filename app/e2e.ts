@@ -105,6 +105,22 @@ async function main() {
   const assetSlots = pda("anqa_assets");
   const oracleState = pda("anqa_oracle");
   const vault = pda("anqa_vault");
+  const internalOracle = pda("anqa_int_oracle");
+
+  // The crank now reads the relay, not Pyth — because inside a rollup Pyth's
+  // accounts are not delegated to us and cannot be read at all. A keeper
+  // refreshes the relay on base layer where the signature is verifiable.
+  const syncOracle = () =>
+    program.methods
+      .syncInternalOracle()
+      .accounts({
+        keeper: payer.publicKey,
+        market,
+        internalOracle,
+        priceUpdate: BTC_FEED,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
 
   console.log("\n════ ANQA END-TO-END (devnet) ════");
   console.log(`market ${MARKET_ID}  tick $${TICK / 1e6}\n`);
@@ -137,9 +153,10 @@ async function main() {
     .initializeVault(MARKET_ID)
     .accounts({ authority: payer.publicKey, market, collateralMint: mint, vault, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY })
     .rpc(); await sleep(PACE);
+  await syncOracle(); await sleep(PACE);
   await program.methods
     .crank(0, new BN(0))
-    .accounts({ cranker: payer.publicKey, market, riskGroup, assetSlots, oracleState, priceUpdate: BTC_FEED })
+    .accounts({ cranker: payer.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
     .rpc(); await sleep(PACE);
 
   const os0: any = await rpc(() => program.account.oracleState.fetch(oracleState));
@@ -231,9 +248,10 @@ async function main() {
 
   // ── crank ────────────────────────────────────────────────────────────────
   console.log("\n[crank]");
+  await syncOracle(); await sleep(PACE);
   await program.methods
     .crank(0, new BN(10_000))
-    .accounts({ cranker: payer.publicKey, market, riskGroup, assetSlots, oracleState, priceUpdate: BTC_FEED })
+    .accounts({ cranker: payer.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
     .rpc(); await sleep(PACE);
   for (const n of ["maker", "taker"]) {
     await program.methods

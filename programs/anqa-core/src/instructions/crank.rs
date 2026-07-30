@@ -6,17 +6,28 @@
 //! movement per crank. Miss cranks during a fast move and the shortfall becomes
 //! bad debt against the vault rather than the trader's collateral.
 //!
-//! The mark price comes from **Pyth**, never from the caller. A cranker that
-//! could name its own price could mark every position wherever it liked and
-//! liquidate at will; the signer here is untrusted and permissionless by design.
+//! The mark price comes from the **internal oracle relay**, never from the
+//! caller. A cranker that could name its own price could mark every position
+//! wherever it liked and liquidate at will; the signer here is untrusted and
+//! permissionless by design.
+//!
+//! It reads the relay rather than Pyth directly because this instruction must
+//! run **inside the rollup**, where Pyth's accounts are not delegated to us and
+//! cannot be read at all. `sync_internal_oracle` refreshes the relay on base
+//! layer, where Pyth's signature is still verifiable; this side re-checks feed
+//! identity, staleness and confidence before marking anyone against it.
 
 use anchor_lang::prelude::*;
 use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut};
-use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 
-use crate::constants::{ASSET_SLOTS_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED};
+use crate::constants::{
+    ASSET_SLOTS_SEED, INTERNAL_ORACLE_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED,
+};
 use crate::errors::{map_risk, AnqaError};
-use crate::state::{accept_mark, read_pyth, AssetSlots, Market, OracleState, Portfolio, RiskGroup};
+use crate::state::{
+    accept_mark, read_internal, AssetSlots, InternalOracle, Market, OracleState, Portfolio,
+    RiskGroup,
+};
 
 #[derive(Accounts)]
 pub struct Crank<'info> {
@@ -39,47 +50,26 @@ pub struct Crank<'info> {
     #[account(mut, seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub oracle_state: Account<'info, OracleState>,
 
-    /// Pyth price update. The feed id is checked against the market's own, so a
-    /// caller cannot substitute a cheaper asset's oracle.
-    pub price_update: Account<'info, PriceUpdateV2>,
-    // remaining_accounts: optional secondary PriceUpdateV2 for cross-checking.
+    /// The relayed price. Delegated into the rollup alongside the book, which is
+    /// the only way this instruction can read a price there at all.
+    #[account(seeds = [INTERNAL_ORACLE_SEED, &market.market_id.to_le_bytes()], bump)]
+    pub internal_oracle: Account<'info, InternalOracle>,
 }
 
-pub fn handler<'info>(
-    ctx: Context<'_, '_, 'info, 'info, Crank<'info>>,
-    asset_index: u32,
-    funding_rate_e9: i128,
-) -> Result<()> {
+pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> Result<()> {
     require!(
         (asset_index as usize) < crate::constants::MAX_ASSETS,
         AnqaError::BadAssetIndex
     );
 
     let market = &ctx.accounts.market;
-    let primary = read_pyth(
-        &ctx.accounts.price_update,
+    let primary = read_internal(
+        &ctx.accounts.internal_oracle,
         &market.oracle.feed_id,
         market.oracle.max_age_secs,
         market.oracle.max_conf_bps,
     )?;
-
-    // Optional second source. When configured, the two must agree or the
-    // breaker trips — disagreement means one is wrong and we cannot tell which.
-    let secondary = if market.oracle.secondary_feed_id != [0u8; 32] {
-        let sec_ai = ctx
-            .remaining_accounts
-            .first()
-            .ok_or(AnqaError::OracleUnavailable)?;
-        let sec: Account<PriceUpdateV2> = Account::try_from(sec_ai)?;
-        Some(read_pyth(
-            &sec,
-            &market.oracle.secondary_feed_id,
-            market.oracle.max_age_secs,
-            market.oracle.max_conf_bps,
-        )?)
-    } else {
-        None
-    };
+    let secondary = None;
 
     let mark_price = accept_mark(
         &mut ctx.accounts.oracle_state,

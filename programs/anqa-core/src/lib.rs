@@ -139,11 +139,7 @@ pub mod anqa_core {
 
     /// Advance mark price and funding for an asset. The mark is read from Pyth;
     /// the caller cannot supply a price.
-    pub fn crank<'info>(
-        ctx: Context<'_, '_, 'info, 'info, Crank<'info>>,
-        asset_index: u32,
-        funding_rate_e9: i128,
-    ) -> Result<()> {
+    pub fn crank(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> Result<()> {
         instructions::crank::handler(ctx, asset_index, funding_rate_e9)
     }
 

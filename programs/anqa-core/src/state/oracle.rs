@@ -230,6 +230,46 @@ pub fn read_pyth(
     Ok(price)
 }
 
+/// Read the relayed price, applying the same gates as the direct Pyth path.
+///
+/// This is what the venue uses **inside a rollup**, where Pyth's own accounts
+/// are not delegated to us and therefore unreadable. The signature was verified
+/// on base layer by `sync_internal_oracle`; what we can still check here is that
+/// the relay is fresh, carries the feed this market was created with, and has a
+/// confidence interval we are willing to mark positions against.
+///
+/// Staleness is measured against the oracle's own `publish_time`, not the slot
+/// the relay was written — a keeper faithfully relaying a stale price must not
+/// be able to launder it into a fresh one.
+pub fn read_internal(
+    io: &crate::state::InternalOracle,
+    feed_id: &[u8; 32],
+    max_age_secs: u64,
+    max_conf_bps: u16,
+) -> Result<OraclePrice> {
+    require!(io.feed_id == *feed_id, AnqaError::WrongPriceFeed);
+    require!(io.price.mantissa > 0, AnqaError::OracleUnavailable);
+
+    let now = Clock::get()?.unix_timestamp;
+    let age = now.saturating_sub(io.publish_time);
+    require!(
+        age >= 0 && (age as u64) <= max_age_secs,
+        AnqaError::OracleUnavailable
+    );
+
+    let price = OraclePrice {
+        price: io.price.mantissa,
+        exponent: io.price.exponent,
+        conf: io.conf,
+        publish_time: io.publish_time,
+    };
+    require!(
+        price.conf_bps()? <= max_conf_bps as u64,
+        AnqaError::OracleConfidenceTooWide
+    );
+    Ok(price)
+}
+
 /// Absolute difference between two prices, in basis points of the first.
 fn deviation_bps(a: u64, b: u64) -> Result<u64> {
     require!(a > 0, AnqaError::OracleUnavailable);
