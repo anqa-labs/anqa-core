@@ -16,8 +16,8 @@
 //! | **book** | the resting orders matching reads and writes |
 //! | **risk group** (router) | `execute_trade` writes the header on every fill (`loss_stale_active` at minimum, plus bankruptcy counters) |
 //! | **asset slots** (slabs) | per-asset open interest and engine state, written on every fill |
-//! | **internal oracle** | the relayed mark; without it the crank cannot run inside the rollup |
 //! | **oracle state** | the crank *writes* it on every accept — last mark, EMA, breaker |
+//! | **fill tape** | `settle_fill` prints to it; unpermissioned, the public face of a dark market |
 //!
 //! Portfolios are delegated separately, per trader — see `delegate_portfolio.rs`.
 //!
@@ -26,6 +26,14 @@
 //! The **money**: custody vault, insurance vault, protocol vault, deposit
 //! ledgers. That is the honest form of "collateral never enters the rollup" —
 //! the funds stay out, the accounting goes in and commits back.
+//!
+//! The **market config** and the **internal oracle relay**, both for the same
+//! reason: nothing in the rollup writes them, the rollup clone-reads
+//! undelegated base accounts, and delegating either one breaks the base-layer
+//! instruction that *does* write it. For the relay that is
+//! `sync_internal_oracle`, which must run on base because that is the only
+//! place Pyth's signature can be checked — delegate it and the mark freezes
+//! at delegation time.
 //!
 //! And the **market config**. Nothing writes it on the trading path, the
 //! rollup can clone-read undelegated base accounts (verified live on devnet),

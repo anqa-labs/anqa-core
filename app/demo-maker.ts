@@ -1,0 +1,267 @@
+/**
+ * A resident market maker for the demo venue.
+ *
+ * Without depth the terminal is a beautiful empty room — and worse, it cannot
+ * show the one thing worth showing: rows that exist and cannot be read. This
+ * keeps a persistent maker quoting a ladder around the mark, so any visitor
+ * sees hidden depth on both sides and can actually trade into it.
+ *
+ * Run once to set up and quote:      npx ts-node --transpile-only app/demo-maker.ts
+ * Re-quote later (cancels, re-rests): same command.
+ * Settle whatever the visitors matched: ANQA_SETTLE=1 same command.
+ */
+
+import * as anchor from "@coral-xyz/anchor";
+import { BN, Program } from "@coral-xyz/anchor";
+import {
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
+import {
+  Connection,
+  Keypair,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+const BTC_FEED = new PublicKey("4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo");
+const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
+const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
+const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
+const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
+const DEC = 6;
+const COLLATERAL = 2_000_000 * 10 ** DEC;
+const LEVELS = 4;
+const LOTS = 5;
+const STEP_BPS = 8; // ~0.08% between levels
+
+const S = (x: string) => Buffer.from(x);
+const le8 = (n: BN | number) => new BN(n).toArrayLike(Buffer, "le", 8);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const PACE = Number(process.env.ANQA_PACE ?? 700);
+
+async function main() {
+  const conn = new Connection(RPC, "confirmed");
+  const er = new Connection(ER_RPC, "confirmed");
+  const admin = Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8")))
+  );
+
+  // A persistent identity, so the ladder belongs to the same maker each run.
+  const makerFile = `app/.demo-maker-${MARKET_ID}.json`;
+  let maker: Keypair;
+  if (fs.existsSync(makerFile)) {
+    maker = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(makerFile, "utf-8"))));
+  } else {
+    maker = Keypair.generate();
+    fs.writeFileSync(makerFile, JSON.stringify(Array.from(maker.secretKey)));
+  }
+  console.log(`\n════ demo maker ${maker.publicKey.toBase58()} ════\n`);
+
+  const mintFile = `app/.demo-mint-${MARKET_ID}.json`;
+  const mint = new PublicKey(JSON.parse(fs.readFileSync(mintFile, "utf-8")).mint);
+
+  const idl = JSON.parse(fs.readFileSync("target/idl/anqa_core.json", "utf-8"));
+  const mkProg = (c: Connection, kp: Keypair) =>
+    new Program(idl, new anchor.AnchorProvider(c, new anchor.Wallet(kp), {
+      commitment: "confirmed",
+      skipPreflight: false,
+    })) as any;
+  const pBase = mkProg(conn, maker);
+  const pEr = mkProg(er, maker);
+  const pAdminEr = mkProg(er, admin);
+
+  const pda = (t: string, e: Buffer[] = []) =>
+    PublicKey.findProgramAddressSync([S(t), le8(MARKET_ID), ...e], PROGRAM_ID)[0];
+  const market = pda("anqa_market");
+  const book = pda("anqa_book");
+  const riskGroup = pda("anqa_risk");
+  const assetSlots = pda("anqa_assets");
+  const oracleState = pda("anqa_oracle");
+  const internalOracle = pda("anqa_int_oracle");
+  const vault = pda("anqa_vault");
+  const tape = pda("anqa_tape");
+  const portfolio = pda("anqa_portfolio", [maker.publicKey.toBuffer()]);
+  const ledger = pda("anqa_ledger", [maker.publicKey.toBuffer()]);
+  const receipt = pda("anqa_dreceipt", [maker.publicKey.toBuffer()]);
+  const delegationOf = (a: PublicKey) => ({
+    buffer: PublicKey.findProgramAddressSync([S("buffer"), a.toBuffer()], PROGRAM_ID)[0],
+    delegationRecord: PublicKey.findProgramAddressSync([S("delegation"), a.toBuffer()], DLP)[0],
+    delegationMetadata: PublicKey.findProgramAddressSync([S("delegation-metadata"), a.toBuffer()], DLP)[0],
+  });
+  const exists = async (a: PublicKey) => (await conn.getAccountInfo(a)) !== null;
+  const step = async (label: string, already: () => Promise<boolean>, run: () => Promise<any>) => {
+    if (await already()) return console.log(`  ·  ${label}`);
+    await run();
+    await sleep(PACE);
+    console.log(`  ✓  ${label}`);
+  };
+
+  // Rent and gas for the maker.
+  const bal = await conn.getBalance(maker.publicKey);
+  if (bal < 0.05 * LAMPORTS_PER_SOL) {
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: admin.publicKey,
+        toPubkey: maker.publicKey,
+        lamports: 0.25 * LAMPORTS_PER_SOL,
+      })
+    );
+    await anchor.web3.sendAndConfirmTransaction(conn, tx, [admin]);
+    console.log("  ✓  maker funded with SOL");
+  }
+
+  await step("portfolio", () => exists(portfolio), () =>
+    pBase.methods.openPortfolio()
+      .accounts({ trader: maker.publicKey, market, portfolio, systemProgram: SystemProgram.programId })
+      .rpc()
+  );
+  await step("ledger", () => exists(ledger), () =>
+    pBase.methods.initializeLedger()
+      .accounts({ trader: maker.publicKey, market, ledger, systemProgram: SystemProgram.programId })
+      .rpc()
+  );
+
+  const ata = await getOrCreateAssociatedTokenAccount(conn, admin, mint, maker.publicKey);
+  const led: any = await pBase.account.userDepositLedger.fetch(ledger).catch(() => null);
+  if (!led || Number(led.deposited) === 0) {
+    await mintTo(conn, admin, mint, ata.address, admin, COLLATERAL);
+    const d = delegationOf(receipt);
+    await pBase.methods.deposit(new BN(COLLATERAL), false)
+      .accounts({
+        trader: maker.publicKey, market, ledger,
+        traderTokenAccount: ata.address, vault,
+        receipt, buffer: d.buffer,
+        delegationRecord: d.delegationRecord, delegationMetadata: d.delegationMetadata,
+        ownerProgram: PROGRAM_ID, delegationProgram: DLP,
+        tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    await sleep(PACE);
+    console.log(`  ✓  deposited ${(COLLATERAL / 1e6).toLocaleString()} USDC`);
+  } else {
+    console.log("  ·  collateral already deposited");
+  }
+
+  const isDelegated = (await conn.getAccountInfo(portfolio))?.owner?.equals(DLP) ?? false;
+  if (!isDelegated) {
+    const d = delegationOf(portfolio);
+    await pBase.methods.delegatePortfolio(MARKET_ID)
+      .accounts({
+        trader: maker.publicKey, portfolio,
+        bufferPortfolio: d.buffer, delegationRecordPortfolio: d.delegationRecord,
+        delegationMetadataPortfolio: d.delegationMetadata,
+        ownerProgram: PROGRAM_ID, delegationProgram: DLP, systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    await sleep(PACE);
+    console.log("  ✓  portfolio delegated");
+  } else {
+    console.log("  ·  portfolio already in session");
+  }
+
+  await pEr.methods.claimDeposit()
+    .accounts({
+      caller: maker.publicKey, market, riskGroup, assetSlots, portfolio, ledger,
+      receipt: null, magicContext: null, magicProgram: null,
+    })
+    .rpc().catch(() => {});
+  await sleep(PACE);
+
+  // Settle anything visitors matched against the ladder, so the tape moves.
+  if (process.env.ANQA_SETTLE === "1") {
+    for (let i = 0; i < 8; i++) {
+      const bk: any = await pEr.account.book.fetch(book).catch(() => null);
+      if (!bk || Number(bk.pendingCount) === 0) break;
+      const head = bk.pending[bk.pendingHead];
+      try {
+        await pAdminEr.methods.settleFill()
+          .accounts({
+            caller: admin.publicKey, market, book, riskGroup, assetSlots, oracleState,
+            takerPortfolio: pda("anqa_portfolio", [new PublicKey(head.taker).toBuffer()]),
+            makerPortfolio: pda("anqa_portfolio", [new PublicKey(head.maker).toBuffer()]),
+            tape,
+          })
+          .rpc();
+        console.log(`  ✓  settled ${head.baseLots}@${head.priceInTicks}`);
+      } catch (e: any) {
+        console.log("  ·  settle:", String(e?.message ?? e).slice(0, 100));
+        break;
+      }
+      await sleep(PACE);
+    }
+  }
+
+  // Re-anchor before quoting, while the market is still provably empty.
+  // The kernel refuses this the moment any position or loss exists, so it can
+  // only ever run at a clean start — which is exactly when the accrual clock
+  // needs pinning to the rollup's slot domain and the asset's price anchor
+  // needs pinning to the live mark. Skipping it leaves the asset anchored
+  // wherever it was when the market was created, and the first real fill is
+  // refused (`LockActive`) for reasons that are very hard to see from outside.
+  await pAdminEr.methods.syncInternalOracle()
+    .accounts({ keeper: admin.publicKey, market, internalOracle, priceUpdate: BTC_FEED, systemProgram: SystemProgram.programId })
+    .rpc().catch(() => {});
+  await sleep(PACE);
+  await pAdminEr.methods.reanchorOracle(0)
+    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
+    .rpc()
+    .then(() => console.log("  ✓  re-anchored at a clean start"))
+    .catch((e: any) => console.log("  ·  re-anchor:", String(e?.message ?? e).slice(0, 80)));
+  await sleep(PACE);
+
+  // Fresh mark, then re-quote from scratch.
+  await pAdminEr.methods.crank(0, new BN(0))
+    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
+    .rpc().catch(() => {});
+  await sleep(PACE);
+  const os1: any = await pEr.account.oracleState.fetch(oracleState);
+  const mark = Number(os1.lastPrice);
+  const m: any = await pBase.account.market.fetch(market);
+  const tick = Number(m.tickSize);
+  const markTicks = Math.floor(mark / tick);
+  console.log(`  ·  mark $${(mark / 1e6).toLocaleString()}`);
+
+  await pEr.methods.cancelAllOrders()
+    .accounts({ trader: maker.publicKey, market, book, portfolio })
+    .rpc().catch(() => {});
+  await sleep(PACE);
+
+  let rested = 0;
+  for (let i = 1; i <= LEVELS; i++) {
+    const off = Math.max(1, Math.round((markTicks * STEP_BPS * i) / 10_000));
+    for (const [side, px] of [
+      [{ bid: {} }, markTicks - off],
+      [{ ask: {} }, markTicks + off],
+    ] as const) {
+      try {
+        await pEr.methods
+          .placeOrder(side, { postOnly: {} }, new BN(px), new BN(LOTS), new BN(Date.now() % 1e9 + rested))
+          .accounts({
+            trader: maker.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio,
+          })
+          .rpc();
+        rested++;
+        await sleep(PACE);
+      } catch (e: any) {
+        console.log(`  ·  level ${i}:`, String(e?.message ?? e).slice(0, 90));
+      }
+    }
+  }
+  const bk: any = await pEr.account.book.fetch(book);
+  const tp: any = await pEr.account.fillTape.fetch(tape);
+  console.log(`\n  ✓  ${rested} orders resting — book ${bk.bids.count} bid / ${bk.asks.count} ask`);
+  console.log(`  ·  tape has ${tp.count} print(s)\n`);
+}
+
+main().catch((e) => {
+  console.error(e.logs ?? e);
+  process.exit(1);
+});

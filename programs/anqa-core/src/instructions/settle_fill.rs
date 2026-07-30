@@ -28,7 +28,7 @@ use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut, TradeRequestV16, PO
 use crate::constants::{
     ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED, TAPE_SEED,
 };
-use crate::errors::AnqaError;
+use crate::errors::{map_risk, AnqaError};
 use crate::events::{Fill, OrderCancelled};
 use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
 use crate::instructions::place_order::band_ok;
@@ -117,6 +117,23 @@ pub fn handler(ctx: Context<SettleFill>) -> Result<()> {
 
         let mut view =
             MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+
+        // Settlement happens *after* matching, so both sides may have accrued
+        // funding or losses since the book paired them, and both carry health
+        // certificates stamped against older epochs. The kernel refuses to
+        // trade on a stale certificate (`LockActive`), so refresh both first.
+        // The lit path gets this for free — it refreshes the taker up front
+        // and the makers were certified when they rested a moment earlier —
+        // which is exactly why decoupling the two halves needs it stated.
+        {
+            let mut tv = PortfolioV16ViewMut::new(taker.account_mut());
+            map_risk(view.full_account_refresh_not_atomic(&mut tv))?;
+        }
+        {
+            let mut mv = PortfolioV16ViewMut::new(maker.account_mut());
+            map_risk(view.full_account_refresh_not_atomic(&mut mv))?;
+        }
+
         let req = TradeRequestV16 {
             asset_index,
             size_q: i128::from(fill.base_lots)

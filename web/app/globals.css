@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+/**
+ * anqa — عنقاء
+ * "known by name, unseen by eye"
+ *
+ * The palette is a night with one warm thing in it. Everything structural is
+ * a near-black or a grey; the phoenix gold is reserved for the few places
+ * that carry meaning — the wordmark, a live mark price, an armed state.
+ * Bids and asks get the only other colour, and nothing else competes.
+ */
+
+@theme {
+  --color-void: #08090b;
+  --color-ink: #0d0f13;
+  --color-surface: #12151b;
+  --color-raised: #181c24;
+  --color-line: #232833;
+  --color-line-soft: #1b1f27;
+
+  --color-dim: #6b7280;
+  --color-muted: #98a2b3;
+  --color-text: #d7dbe3;
+  --color-bright: #f2f4f8;
+
+  --color-phoenix: #d99a2b;
+  --color-phoenix-soft: #8a6320;
+  --color-ember: #f0b854;
+
+  --color-bid: #3fb27f;
+  --color-ask: #e0574f;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+}
+
+html,
+body {
+  background: var(--color-void);
+  color: var(--color-text);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers must never jitter as they tick. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* The hidden-depth motif: order rows nobody may read. */
+.veil {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in oklab, var(--color-line) 90%, transparent) 0px,
+    color-mix(in oklab, var(--color-line) 90%, transparent) 1px,
+    transparent 1px,
+    transparent 7px
+  );
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.live-dot {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+@keyframes print-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+    background-color: color-mix(in oklab, var(--color-phoenix) 14%, transparent);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    background-color: transparent;
+  }
+}
+.print-in {
+  animation: print-in 700ms ease-out;
+}
+
+/* Wallet adapter: strip its defaults back to our surface. */
+.wallet-adapter-button {
+  background: var(--color-raised) !important;
+  border: 1px solid var(--color-line) !important;
+  border-radius: 6px !important;
+  height: 34px !important;
+  padding: 0 12px !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--color-text) !important;
+  transition: border-color 120ms ease;
+}
+.wallet-adapter-button:not([disabled]):hover {
+  background: var(--color-raised) !important;
+  border-color: var(--color-phoenix-soft) !important;
+}
+.wallet-adapter-modal-wrapper {
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-line) !important;
+}
+.wallet-adapter-modal-button-close {
+  background: var(--color-raised) !important;
+}
+.wallet-adapter-modal-title {
+  color: var(--color-bright) !important;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-dim);
+}

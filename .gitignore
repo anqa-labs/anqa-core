@@ -8,3 +8,6 @@ test-ledger
 
 # vendored percolator builds into the workspace target dir
 vendor/percolator/target
+
+# Demo venue keys and mints (devnet play money)
+app/.demo-*.json

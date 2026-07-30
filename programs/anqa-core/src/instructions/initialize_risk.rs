@@ -24,9 +24,37 @@ use crate::state::{read_pyth, AssetSlots, AssetTag, Market, RiskGroup};
 /// cadence a solvency parameter, not an ops detail.
 pub const INITIAL_MARGIN_BPS: u64 = 500; // 20x
 pub const MAINTENANCE_MARGIN_BPS: u64 = 250; // 2.5%
-pub const MAX_PRICE_MOVE_BPS_PER_SLOT: u64 = 100; // 1% per accrual — see above
 pub const MAX_FUNDING_E9_PER_SLOT: u64 = 10_000;
 pub const LIQUIDATION_FEE_BPS: u64 = 0;
+
+/// How far one crank may carry the accrual clock, in slots.
+///
+/// **This has to be sized against the rollup, not base chain.** Measured on
+/// MagicBlock devnet: the rollup produces ~20 slots/sec against base chain's
+/// ~2.7 — roughly 7x. The kernel advances `slot_last` by at most this many
+/// slots per accrual, so a value of 1 (which is fine on a slow chain) leaves
+/// the clock permanently behind a rollup: it can never converge, loss
+/// staleness stays armed, and every fill is refused with `LockActive`.
+///
+/// Worse than the liveness failure is the quiet one: funding accrues over
+/// `segment_dt`, so a clamped clock under-accrues funding by the same factor
+/// it is behind. Traders would pay ~20x too little.
+///
+/// 100 slots is five seconds of rollup time, or thirty-seven of base — enough
+/// headroom for a keeper cranking every second or two to miss a few ticks and
+/// still catch up.
+pub const MAX_ACCRUAL_DT_SLOTS: u64 = 100;
+
+/// Permitted mark movement per slot, in basis points.
+///
+/// The kernel's safety check is `price_move <= move_bps_per_slot * dt`, so the
+/// bound that matters is the **product**: 1 bps x 100 slots = 1% per full
+/// accrual, exactly the envelope 20x leverage allows (`max_price_move_bps <=
+/// ~MM_bps / 2.5`). Expressing it per-slot rather than per-crank is also more
+/// honest than the old constant: a crank that arrives promptly now permits a
+/// proportionally smaller jump, instead of allowing a full 1% however little
+/// time has passed.
+pub const MAX_PRICE_MOVE_BPS_PER_SLOT: u64 = 1;
 
 pub fn anqa_risk_config(asset_count: u32) -> V16Config {
     let mut cfg = V16Config::public_user_fund_with_market_slots(
@@ -38,8 +66,10 @@ pub fn anqa_risk_config(asset_count: u32) -> V16Config {
     cfg.initial_margin_bps = INITIAL_MARGIN_BPS;
     cfg.maintenance_margin_bps = MAINTENANCE_MARGIN_BPS;
     cfg.max_price_move_bps_per_slot = MAX_PRICE_MOVE_BPS_PER_SLOT;
-    cfg.max_accrual_dt_slots = 1;
-    cfg.min_funding_lifetime_slots = 1;
+    cfg.max_accrual_dt_slots = MAX_ACCRUAL_DT_SLOTS;
+    // A funding epoch must outlive a whole accrual window, or the kernel
+    // could accrue across an epoch it has already retired.
+    cfg.min_funding_lifetime_slots = MAX_ACCRUAL_DT_SLOTS;
     cfg.max_abs_funding_e9_per_slot = MAX_FUNDING_E9_PER_SLOT;
     cfg.liquidation_fee_bps = LIQUIDATION_FEE_BPS;
     cfg

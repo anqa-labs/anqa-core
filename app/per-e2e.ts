@@ -54,7 +54,7 @@ const ER_RPC = TEE_TOKEN
   ? `https://devnet-tee.magicblock.app?token=${TEE_TOKEN}`
   : process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
 
-const MARKET_ID = new BN(Date.now() % 1_000_000);
+const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? Date.now() % 1_000_000);
 const TICK = 100_000;
 const DEC = 6;
 const COLLATERAL = 500_000 * 10 ** DEC;
@@ -152,7 +152,12 @@ async function main() {
     .initializeRisk(MARKET_ID, 1)
     .accounts({ authority: payer.publicKey, market, riskGroup, assetSlots, priceUpdate: BTC_FEED, systemProgram: SystemProgram.programId })
     .rpc(); await sleep(PACE);
-  const mint = await createMint(base, payer, payer.publicKey, null, DEC);
+  // Persist the mint so the terminal (and its faucet) can find it later.
+  const mintFile = `app/.demo-mint-${MARKET_ID}.json`;
+  const mint = fs.existsSync(mintFile)
+    ? new PublicKey(JSON.parse(fs.readFileSync(mintFile, "utf-8")).mint)
+    : await createMint(base, payer, payer.publicKey, null, DEC);
+  fs.writeFileSync(mintFile, JSON.stringify({ mint: mint.toBase58() }, null, 2));
   await pBase.methods
     .initializeVault(MARKET_ID)
     .accounts({ authority: payer.publicKey, market, collateralMint: mint, vault, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY })
