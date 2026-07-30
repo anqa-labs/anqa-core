@@ -93,6 +93,15 @@ pub struct Portfolio {
     /// alignment and introduce padding, which `bytemuck::Pod` rejects).
     pub market_id: AssetTag,
     pub bump: u8,
+    /// Initial margin reserved by this trader's **resting orders**, in quote
+    /// atoms, little-endian u128.
+    ///
+    /// The kernel only knows about positions — an order that has not filled yet
+    /// is invisible to it. Without this, a trader could rest orders far beyond
+    /// what their collateral can support and only discover it at match time,
+    /// when the fill is refused and the book has already been walked. Anqa
+    /// therefore reserves margin at placement and releases it on cancel or fill.
+    pub reserved_margin: [u8; 16],
     pub inner: [u8; PORTFOLIO_BYTES],
 }
 
@@ -105,5 +114,41 @@ impl Portfolio {
     }
     pub fn account_mut(&mut self) -> &mut PortfolioAccountV16Account {
         bytemuck::from_bytes_mut(&mut self.inner)
+    }
+
+    pub fn reserved(&self) -> u128 {
+        u128::from_le_bytes(self.reserved_margin)
+    }
+    pub fn reserve(&mut self, amount: u128) {
+        self.reserved_margin = self.reserved().saturating_add(amount).to_le_bytes();
+    }
+    pub fn release(&mut self, amount: u128) {
+        self.reserved_margin = self.reserved().saturating_sub(amount).to_le_bytes();
+    }
+
+    /// Equity and the margin already committed to open positions, as certified
+    /// by the kernel. Only meaningful straight after a refresh — the certificate
+    /// is stamped with the epochs it was computed against and goes stale.
+    ///
+    /// Equity is **signed**: an account whose losses exceeded its collateral is
+    /// bankrupt and reports negative equity, so callers must not cast blindly.
+    pub fn certified(&self) -> Result<(i128, u128)> {
+        let cert = self
+            .account()
+            .health_cert
+            .try_to_runtime()
+            .map_err(|_| crate::errors::AnqaError::RiskEngine)?;
+        Ok((cert.certified_equity, cert.certified_initial_req))
+    }
+
+    /// Free collateral: equity minus margin already committed to positions and
+    /// to resting orders. Zero when bankrupt or fully committed.
+    pub fn free_margin(&self) -> Result<u128> {
+        let (equity, position_margin) = self.certified()?;
+        if equity <= 0 {
+            return Ok(0);
+        }
+        let committed = position_margin.saturating_add(self.reserved());
+        Ok((equity as u128).saturating_sub(committed))
     }
 }

@@ -242,7 +242,10 @@ impl BookSide {
     }
 
     /// Remove a specific order owned by `trader`.
-    pub fn cancel(&mut self, trader: &Pubkey, client_order_id: u64) -> Result<u64> {
+    ///
+    /// Returns `(price_in_ticks, base_lots)` of what was removed, so the caller
+    /// can release the margin that order had reserved.
+    pub fn cancel(&mut self, trader: &Pubkey, client_order_id: u64) -> Result<(u64, u64)> {
         let mut prev = NIL;
         let mut cursor = self.head;
         while cursor != NIL {
@@ -251,6 +254,7 @@ impl BookSide {
             let owner = self.orders[cursor as usize].trader;
             let next = self.orders[cursor as usize].next;
             let lots = self.orders[cursor as usize].base_lots;
+            let price = self.orders[cursor as usize].price_in_ticks;
 
             if active && coid == client_order_id {
                 require_keys_eq!(owner, *trader, AnqaError::NotOrderOwner);
@@ -261,7 +265,7 @@ impl BookSide {
                 }
                 self.free_slot(cursor);
                 self.count = self.count.saturating_sub(1);
-                return Ok(lots);
+                return Ok((price, lots));
             }
             prev = cursor;
             cursor = next;

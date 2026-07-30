@@ -34,7 +34,25 @@ import os from "os";
 import path from "path";
 
 const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
-const DEVNET = "https://api.devnet.solana.com";
+const DEVNET = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Public devnet RPC throttles aggressively; back off and retry rather than
+ *  making the dry run look like a program failure. */
+async function rpc<T>(label: string, fn: () => Promise<T>, tries = 6): Promise<T> {
+  let delay = 1000;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (!msg.includes("429") && !msg.includes("Too Many Requests")) throw e;
+      await sleep(delay);
+      delay *= 2;
+    }
+  }
+  throw new Error(`rpc gave up after ${tries} attempts: ${label}`);
+}
 
 const MARKET_ID = new BN(Date.now() % 1_000_000);
 const TICK_SIZE = new BN(1); // 1 quote atom per tick — keeps prices readable
@@ -101,8 +119,8 @@ async function main() {
       systemProgram: SystemProgram.programId,
     })
     .rpc();
-  const rg = await connection.getAccountInfo(riskGroup);
-  const as_ = await connection.getAccountInfo(assetSlots);
+  const rg = await rpc("riskGroup", () => connection.getAccountInfo(riskGroup));
+  const as_ = await rpc("assetSlots", () => connection.getAccountInfo(assetSlots));
   console.log(
     `[2] risk engine live — group ${rg?.data.length}B, asset slots ${as_?.data.length}B, 20x max leverage`
   );
@@ -173,7 +191,7 @@ async function main() {
     console.log(`[4] ${t.name}: portfolio opened, 500,000 USDC deposited`);
   }
 
-  const vaultBal = await connection.getTokenAccountBalance(vault);
+  const vaultBal = await rpc("vaultBal", () => connection.getTokenAccountBalance(vault));
   console.log("    vault holds:", vaultBal.value.uiAmountString, "USDC");
 
   // --- 5. the trade --------------------------------------------------------
@@ -209,24 +227,54 @@ async function main() {
     .rpc();
   console.log("[6] taker crossed ASK 4 -> positions minted:", sig.slice(0, 16) + "...");
 
-  const tx = await connection.getTransaction(sig, {
-    commitment: "confirmed",
-    maxSupportedTransactionVersion: 0,
-  });
+  await sleep(1500);
+  const tx = await rpc("tx", () =>
+    connection.getTransaction(sig, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    })
+  );
   (tx?.meta?.logMessages ?? [])
     .filter((l) => l.startsWith("Program log: anqa:"))
     .forEach((l) => console.log("   ", l.replace("Program log: ", "")));
 
-  const bookState = await program.account.book.fetch(book);
+  const bookState: any = await rpc("book", () => program.account.book.fetch(book));
   console.log(
     `    book: fill_count=${bookState.fillCount} last=${bookState.lastFillBaseLots}@${bookState.lastFillPriceInTicks} bids=${bookState.bids.count} asks=${bookState.asks.count}`
   );
 
   // Tokens must NOT have moved — a perp fill is pure bookkeeping.
-  const vaultAfter = await connection.getTokenAccountBalance(vault);
+  const vaultAfter = await rpc("vaultAfter", () => connection.getTokenAccountBalance(vault));
   console.log(
     `    vault after trade: ${vaultAfter.value.uiAmountString} USDC (unchanged — a fill moves no tokens)`
   );
+
+  // --- 5b. the margin gate -------------------------------------------------
+  // 500,000 USDC (5e11 atoms) at 20x supports 1e13 of notional — about
+  // 153,846,153 lots at this price. Ask for 500,000,000 lots (3.25e13 notional,
+  // 1.6e12 margin required) and it must be refused *at placement*, before the
+  // book is ever walked.
+  console.log("[6b] margin gate: ordering 500,000,000 lots on 500,000 USDC...");
+  try {
+    await program.methods
+      .placeOrder({ bid: {} }, { limit: {} }, PRICE, new BN(500_000_000), new BN(99))
+      .accounts({
+        trader: payer.publicKey,
+        market,
+        book,
+        riskGroup,
+        assetSlots,
+        portfolio: info.taker.portfolio,
+      })
+      .rpc();
+    console.log("    !! ACCEPTED — margin gate is not working");
+  } catch (e: any) {
+    const logs: string[] = e.logs ?? [];
+    const hit = logs.find((l) => l.includes("InsufficientMargin") || l.includes("Error Message"));
+    console.log("    refused:", (hit ?? e.message).replace("Program log: ", "").trim());
+  }
+
+  await sleep(2000); // public devnet RPC rate-limits hard
 
   // --- 6. crank ------------------------------------------------------------
   const newMark = OPENING_MARK - Math.floor(OPENING_MARK * 0.01); // -1%, the max per accrual

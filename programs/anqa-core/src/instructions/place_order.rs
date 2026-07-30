@@ -23,6 +23,7 @@ use crate::constants::{
     ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, PORTFOLIO_SEED, RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
+use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
 use crate::events::{Fill, OrderAccepted};
 use crate::state::{AssetSlots, Book, Market, OrderType, Portfolio, RiskGroup, Side};
 
@@ -72,7 +73,38 @@ pub fn handler<'info>(
     let market_id = market.market_id;
     let asset_index = market.asset_index as usize;
 
-    // --- 1. matching ---------------------------------------------------------
+    // --- 1. can this trader afford the order at all? -------------------------
+    // The kernel only sees positions; a resting order is invisible to it. So we
+    // check up front against certified equity, counting margin already committed
+    // to open positions *and* to this trader's other resting orders. Without
+    // this an account could paper the book with orders it cannot honour and only
+    // fail at match time, after the book has been walked.
+    let order_notional = market
+        .quote_notional(price_in_ticks, base_lots)
+        .ok_or(AnqaError::MathOverflow)? as u128;
+    let order_margin = order_notional
+        .checked_mul(INITIAL_MARGIN_BPS as u128)
+        .ok_or(AnqaError::MathOverflow)?
+        / 10_000u128;
+
+    {
+        let mut group = ctx.accounts.risk_group.load_mut()?;
+        let n_assets = group.asset_count();
+        let mut slots = ctx.accounts.asset_slots.load_mut()?;
+        let mut taker = ctx.accounts.portfolio.load_mut()?;
+
+        let mut view =
+            MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+        let mut pv = PortfolioV16ViewMut::new(taker.account_mut());
+        map_risk(view.full_account_refresh_not_atomic(&mut pv))?;
+
+        require!(
+            taker.free_margin()? >= order_margin,
+            AnqaError::InsufficientMargin
+        );
+    }
+
+    // --- 2. matching ---------------------------------------------------------
     let (fills, resting, fill_count_after) = {
         let mut book = ctx.accounts.book.load_mut()?;
         let (fills, resting) = book.place(
@@ -87,17 +119,18 @@ pub fn handler<'info>(
         (fills, resting, n)
     };
 
-    // --- 2. risk ------------------------------------------------------------
-    // Each fill becomes a position pair. The kernel may refuse — an
-    // under-margined account cannot be given a position no matter what the
-    // book decided.
+    // --- 3. risk ------------------------------------------------------------
+    // Each fill becomes a position pair. The kernel may still refuse — the
+    // pre-check above is Anqa's, this is the kernel's, and only the kernel's
+    // is authoritative.
     if !fills.is_empty() {
         let mut group = ctx.accounts.risk_group.load_mut()?;
-    let n_assets = group.asset_count();
+        let n_assets = group.asset_count();
         let mut slots = ctx.accounts.asset_slots.load_mut()?;
         let mut taker = ctx.accounts.portfolio.load_mut()?;
 
-        let mut view = MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+        let mut view =
+            MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
 
         for f in fills.iter() {
             // Locate this maker's portfolio among the supplied accounts.
@@ -144,10 +177,33 @@ pub fn handler<'info>(
                 ),
             };
             map_risk(res)?;
+
+            // The maker's resting order became a position: the margin it had
+            // reserved is now accounted for by the kernel, so release ours.
+            let filled_notional = market
+                .quote_notional(f.price_in_ticks, f.base_lots)
+                .ok_or(AnqaError::MathOverflow)? as u128;
+            let freed = filled_notional
+                .checked_mul(INITIAL_MARGIN_BPS as u128)
+                .ok_or(AnqaError::MathOverflow)?
+                / 10_000u128;
+            maker.release(freed);
         }
     }
 
-    // --- 3. the public tape --------------------------------------------------
+    // --- 4. reserve margin for whatever rests --------------------------------
+    if resting > 0 {
+        let resting_notional = market
+            .quote_notional(price_in_ticks, resting)
+            .ok_or(AnqaError::MathOverflow)? as u128;
+        let reserve = resting_notional
+            .checked_mul(INITIAL_MARGIN_BPS as u128)
+            .ok_or(AnqaError::MathOverflow)?
+            / 10_000u128;
+        ctx.accounts.portfolio.load_mut()?.reserve(reserve);
+    }
+
+    // --- 5. the public tape --------------------------------------------------
     let now = Clock::get()?.unix_timestamp;
     let mut fill_seq = fill_count_after - fills.len() as u64;
     for f in fills.iter() {
