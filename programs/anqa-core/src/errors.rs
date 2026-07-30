@@ -64,6 +64,12 @@ pub enum AnqaError {
     PriceOutsideBand,
     #[msg("tick size and lot size must be non-zero")]
     InvalidTickSize,
+    #[msg("no open position on this market")]
+    NoOpenPosition,
+    #[msg("close could not be filled at the given price")]
+    CloseUnfilled,
+    #[msg("trigger price has not been reached")]
+    TriggerNotArmed,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

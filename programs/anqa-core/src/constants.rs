@@ -33,3 +33,4 @@ pub const VAULT_SEED: &[u8] = b"anqa_vault";
 pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";
 /// Relay account mirroring the oracle into the rollup. See state/internal_oracle.rs.
 pub const INTERNAL_ORACLE_SEED: &[u8] = b"anqa_int_oracle";
+pub const TRIGGER_SEED: &[u8] = b"anqa_trigger";

@@ -270,7 +270,7 @@ pub fn handler<'info>(
 }
 
 /// Band check against a mark already validated by the caller.
-fn band_ok(price: u64, mark: u64, max_band_bps: u16) -> bool {
+pub fn band_ok(price: u64, mark: u64, max_band_bps: u16) -> bool {
     if max_band_bps == 0 || mark == 0 {
         return true;
     }

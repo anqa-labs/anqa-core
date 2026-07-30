@@ -141,6 +141,24 @@ impl Portfolio {
         Ok((cert.certified_equity, cert.certified_initial_req))
     }
 
+    /// This trader's open position on `asset_index`, as `(is_long, size_q)`.
+    /// `None` when flat.
+    ///
+    /// Needed because the book knows nothing about positions — it only knows
+    /// orders. Anything that must not increase exposure (closing, stops,
+    /// reduce-only) has to ask the kernel what is actually open.
+    pub fn current_position(&self, asset_index: u32) -> Option<(bool, u128)> {
+        let acct = self.account();
+        for leg_slot in acct.legs.iter() {
+            let leg = leg_slot.try_to_runtime().ok()?;
+            if leg.active && leg.asset_index == asset_index && leg.basis_pos_q != 0 {
+                let is_long = matches!(leg.side, percolator::SideV16::Long);
+                return Some((is_long, leg.basis_pos_q.unsigned_abs()));
+            }
+        }
+        None
+    }
+
     /// Free collateral: equity minus margin already committed to positions and
     /// to resting orders. Zero when bankrupt or fully committed.
     pub fn free_margin(&self) -> Result<u128> {

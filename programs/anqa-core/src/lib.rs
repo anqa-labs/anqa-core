@@ -30,7 +30,7 @@ pub mod state;
 
 use instructions::*;
 use instructions::place_multiple::QuoteParams;
-use state::{OracleKind, OracleParams, OrderType, Side};
+use state::{OracleKind, OracleParams, OrderType, Side, TriggerDirection};
 
 declare_id!("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
 
@@ -169,6 +169,51 @@ pub mod anqa_core {
     /// Post a ladder of post-only quotes in one transaction. All-or-nothing.
     pub fn place_multiple(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<()> {
         instructions::place_multiple::handler(ctx, quotes)
+    }
+
+    /// Close an open position, reduce-only by construction.
+    ///
+    /// Sized to the position the kernel actually holds, so a close can never
+    /// overshoot into an opposite position. IOC — a close that silently rests
+    /// is a position you believe you exited and have not.
+    pub fn close_position<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ClosePosition<'info>>,
+        worst_price_in_ticks: u64,
+        max_base_lots: u64,
+    ) -> Result<()> {
+        instructions::close_position::handler(ctx, worst_price_in_ticks, max_base_lots)
+    }
+
+    /// Arm a stop-loss or take-profit. Sits off-book, reserves no margin, and
+    /// is reduce-only when it fires.
+    pub fn place_trigger_order(
+        ctx: Context<PlaceTriggerOrder>,
+        trigger_id: u64,
+        trigger_price: u64,
+        direction: TriggerDirection,
+        limit_price_in_ticks: u64,
+        max_base_lots: u64,
+    ) -> Result<()> {
+        instructions::trigger_order::place(
+            ctx,
+            trigger_id,
+            trigger_price,
+            direction,
+            limit_price_in_ticks,
+            max_base_lots,
+        )
+    }
+
+    /// Cancel an armed trigger and reclaim its rent.
+    pub fn cancel_trigger_order(ctx: Context<CancelTriggerOrder>) -> Result<()> {
+        instructions::trigger_order::cancel(ctx)
+    }
+
+    /// Fire an armed trigger. Permissionless — a stop-loss is worthless if it
+    /// depends on its owner being online. Pair with `close_position` in the
+    /// same transaction.
+    pub fn fire_trigger_order(ctx: Context<FireTriggerOrder>) -> Result<()> {
+        instructions::trigger_order::fire(ctx)
     }
 
     /// Rollup: cancel one of your resting orders.

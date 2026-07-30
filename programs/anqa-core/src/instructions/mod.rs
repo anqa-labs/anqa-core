@@ -1,4 +1,5 @@
 pub mod cancel_order;
+pub mod close_position;
 pub mod commit_book;
 pub mod crank;
 pub mod liquidate;
@@ -12,9 +13,11 @@ pub mod cancel_bulk;
 pub mod place_multiple;
 pub mod place_order;
 pub mod sync_internal_oracle;
+pub mod trigger_order;
 pub mod withdraw;
 
 pub use cancel_order::*;
+pub use close_position::*;
 pub use commit_book::*;
 pub use crank::*;
 pub use liquidate::*;
@@ -28,4 +31,5 @@ pub use cancel_bulk::*;
 pub use place_multiple::*;
 pub use place_order::*;
 pub use sync_internal_oracle::*;
+pub use trigger_order::*;
 pub use withdraw::*;
