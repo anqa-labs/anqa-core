@@ -39,8 +39,12 @@ pub fn handler(
     tick_size: u64,
     base_lot_size: u64,
     base_decimals: u8,
+    quote_decimals: u8,
     taker_fee_bps: u16,
     maker_rebate_bps: u16,
+    pyth_feed_id: [u8; 32],
+    max_price_age_secs: u64,
+    max_conf_bps: u16,
 ) -> Result<()> {
     let market = &mut ctx.accounts.market;
     market.market_id = market_id;
@@ -48,11 +52,15 @@ pub fn handler(
     market.tick_size = tick_size;
     market.base_lot_size = base_lot_size;
     market.base_decimals = base_decimals;
+    market.quote_decimals = quote_decimals;
     market.taker_fee_bps = taker_fee_bps;
     market.maker_rebate_bps = maker_rebate_bps;
     market.paused = false;
     market.seat_count = 0;
     market.asset_index = 0;
+    market.pyth_feed_id = pyth_feed_id;
+    market.max_price_age_secs = max_price_age_secs;
+    market.max_conf_bps = max_conf_bps;
     market.bump = ctx.bumps.market;
 
     let mut book = ctx.accounts.book.load_init()?;

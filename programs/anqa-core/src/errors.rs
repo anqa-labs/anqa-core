@@ -34,6 +34,12 @@ pub enum AnqaError {
     BadAssetIndex,
     #[msg("cancel resting orders before withdrawing")]
     WithdrawWithRestingOrders,
+    #[msg("oracle price unavailable or stale")]
+    OracleUnavailable,
+    #[msg("oracle confidence interval too wide to mark positions")]
+    OracleConfidenceTooWide,
+    #[msg("price update account does not match this market's feed")]
+    WrongPriceFeed,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

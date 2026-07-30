@@ -15,6 +15,10 @@ pub struct Market {
     pub base_lot_size: u64,
     /// Decimals of the base asset, for client display.
     pub base_decimals: u8,
+    /// Decimals of the collateral/quote mint (6 for USDC). The mark price is
+    /// denominated in quote atoms, so this — not `base_decimals` — is what the
+    /// oracle read rescales to.
+    pub quote_decimals: u8,
     /// Taker fee charged on notional, in basis points.
     pub taker_fee_bps: u16,
     /// Maker rebate on notional, in basis points.
@@ -25,6 +29,13 @@ pub struct Market {
     pub seat_count: u64,
     /// Index of this market's asset inside the risk group's slot array.
     pub asset_index: u32,
+    /// Pyth feed this market marks against. Fixed at creation — a market must
+    /// not be able to switch the oracle that decides its liquidations.
+    pub pyth_feed_id: [u8; 32],
+    /// Refuse prices older than this, in seconds.
+    pub max_price_age_secs: u64,
+    /// Refuse prices whose confidence interval exceeds this fraction of price.
+    pub max_conf_bps: u16,
     pub bump: u8,
 }
 

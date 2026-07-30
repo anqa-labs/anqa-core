@@ -4,6 +4,7 @@
 //! then activates one asset per market at its opening mark.
 
 use anchor_lang::prelude::*;
+use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 use percolator::{
     EngineAssetSlotV16Account, Market as PercMarket, MarketGroupV16HeaderAccount,
     MarketGroupV16ViewMut, V16Config,
@@ -11,7 +12,7 @@ use percolator::{
 
 use crate::constants::{ASSET_SLOTS_SEED, MARKET_SEED, MAX_ASSETS, RISK_GROUP_SEED};
 use crate::errors::{map_risk, AnqaError};
-use crate::state::{AssetSlots, AssetTag, Market, RiskGroup};
+use crate::state::{read_mark, AssetSlots, AssetTag, Market, RiskGroup};
 
 /// Anqa's launch risk parameters.
 ///
@@ -75,6 +76,10 @@ pub struct InitializeRisk<'info> {
     )]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
+    /// The opening mark comes from Pyth too — not even the authority should be
+    /// able to seed a market at a price of its choosing.
+    pub price_update: Account<'info, PriceUpdateV2>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -82,12 +87,21 @@ pub fn handler(
     ctx: Context<InitializeRisk>,
     market_id: u64,
     asset_count: u32,
-    opening_mark: u64,
 ) -> Result<()> {
     require!(
         asset_count > 0 && asset_count as usize <= MAX_ASSETS,
         AnqaError::BadAssetIndex
     );
+
+    let m = &ctx.accounts.market;
+    let opening_mark = read_mark(
+        &ctx.accounts.price_update,
+        &m.pyth_feed_id,
+        m.max_price_age_secs,
+        m.max_conf_bps,
+        m.quote_decimals,
+    )?
+    .price;
 
     let cfg = anqa_risk_config(asset_count);
     let slot = Clock::get()?.slot;

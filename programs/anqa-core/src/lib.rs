@@ -45,8 +45,12 @@ pub mod anqa_core {
         tick_size: u64,
         base_lot_size: u64,
         base_decimals: u8,
+        quote_decimals: u8,
         taker_fee_bps: u16,
         maker_rebate_bps: u16,
+        pyth_feed_id: [u8; 32],
+        max_price_age_secs: u64,
+        max_conf_bps: u16,
     ) -> Result<()> {
         instructions::initialize_market::handler(
             ctx,
@@ -54,8 +58,12 @@ pub mod anqa_core {
             tick_size,
             base_lot_size,
             base_decimals,
+            quote_decimals,
             taker_fee_bps,
             maker_rebate_bps,
+            pyth_feed_id,
+            max_price_age_secs,
+            max_conf_bps,
         )
     }
 
@@ -64,9 +72,8 @@ pub mod anqa_core {
         ctx: Context<InitializeRisk>,
         market_id: u64,
         asset_count: u32,
-        opening_mark: u64,
     ) -> Result<()> {
-        instructions::initialize_risk::handler(ctx, market_id, asset_count, opening_mark)
+        instructions::initialize_risk::handler(ctx, market_id, asset_count)
     }
 
     /// Base layer: create the collateral vault. Never delegated to the rollup.
@@ -117,14 +124,10 @@ pub mod anqa_core {
         )
     }
 
-    /// Advance mark price and funding for an asset.
-    pub fn crank(
-        ctx: Context<Crank>,
-        asset_index: u32,
-        mark_price: u64,
-        funding_rate_e9: i128,
-    ) -> Result<()> {
-        instructions::crank::handler(ctx, asset_index, mark_price, funding_rate_e9)
+    /// Advance mark price and funding for an asset. The mark is read from Pyth;
+    /// the caller cannot supply a price.
+    pub fn crank(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> Result<()> {
+        instructions::crank::handler(ctx, asset_index, funding_rate_e9)
     }
 
     /// Settle one account against the latest accrual.

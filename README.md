@@ -49,6 +49,15 @@ Deployed to devnet at `4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j`.
   resting orders to be cancelled, since their reserved margin is bookkeeping the
   kernel cannot see. This is the visible end of *losses are senior, wins are
   junior*.
+- **The mark price comes from Pyth, never from the caller.** `crank` is
+  permissionless, so a cranker that could name its own price could mark every
+  position wherever it liked and liquidate at will. Two gates guard the read:
+  staleness (refuse prices older than the market's limit) and **confidence** —
+  Pyth publishes an interval, and when it widens past `max_conf_bps` the market
+  is disagreeing with itself, so we refuse to mark rather than mark on a number
+  nobody trusts. The feed id is pinned at market creation, so a caller cannot
+  substitute a different asset's oracle. Verified live on devnet against Pyth's
+  sponsored BTC/USD feed.
 - **Order margin is reserved at placement**, not only checked at fill — otherwise
   an account could paper the book with orders it cannot honour and fail only
   after the book was walked.
