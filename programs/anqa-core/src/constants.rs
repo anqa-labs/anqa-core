@@ -30,6 +30,9 @@ pub const ASSET_SLOTS_SEED: &[u8] = b"anqa_assets";
 pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
 /// Protocol custody for collateral. Never delegated to the rollup.
 pub const VAULT_SEED: &[u8] = b"anqa_vault";
+/// Layer 2 of the loss waterfall. Kept apart from custody so a bug in the
+/// withdraw path cannot pay out insurance as trader collateral.
+pub const INSURANCE_VAULT_SEED: &[u8] = b"anqa_insurance";
 pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";
 /// Relay account mirroring the oracle into the rollup. See state/internal_oracle.rs.
 pub const INTERNAL_ORACLE_SEED: &[u8] = b"anqa_int_oracle";

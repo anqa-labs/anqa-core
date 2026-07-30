@@ -90,6 +90,13 @@ pub mod anqa_core {
         instructions::deposit::handler(ctx, amount)
     }
 
+    /// Promote proven-backed profit from junior `pnl` into withdrawable
+    /// `capital`. Without this a winner can close a profitable position and
+    /// still be unable to take the profit home. Permissionless.
+    pub fn realize_pnl(ctx: Context<RealizePnl>) -> Result<()> {
+        instructions::realize_pnl::handler(ctx)
+    }
+
     /// Base layer: withdraw collateral. Requires a flat account — the kernel
     /// will not release funds out from under an open position.
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
@@ -143,6 +150,33 @@ pub mod anqa_core {
     /// Settle one account against the latest accrual.
     pub fn refresh_portfolio(ctx: Context<RefreshPortfolio>) -> Result<()> {
         instructions::crank::refresh_handler(ctx)
+    }
+
+    /// Create the insurance vault — layer 2 of the loss waterfall, held apart
+    /// from custody so it cannot be paid out as trader collateral.
+    pub fn initialize_insurance_vault(
+        ctx: Context<InitializeInsuranceVault>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::insurance::initialize_vault(ctx, market_id)
+    }
+
+    /// Fund an asset's insurance, long and short domains separately.
+    /// Permissionless — anyone may strengthen the backstop.
+    pub fn fund_insurance(
+        ctx: Context<FundInsurance>,
+        asset_index: u32,
+        long_amount: u64,
+        short_amount: u64,
+    ) -> Result<()> {
+        instructions::insurance::fund(ctx, asset_index, long_amount, short_amount)
+    }
+
+    /// Auto-deleverage a profitable position — layer 4, reached only when
+    /// counterparty collateral, insurance and the haircut have all failed.
+    /// Permissionless, bounded by the kernel, and always emits an event.
+    pub fn adl(ctx: Context<Adl>, asset_index: u32, reduce_base_lots: u64) -> Result<()> {
+        instructions::adl::handler(ctx, asset_index, reduce_base_lots)
     }
 
     /// Liquidate an unhealthy account. Permissionless; refuses while healthy.
