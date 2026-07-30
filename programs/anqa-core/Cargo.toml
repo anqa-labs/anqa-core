@@ -1,0 +1,32 @@
+[package]
+name = "anqa-core"
+version = "0.1.0"
+description = "Anqa — a perp DEX whose order book lives inside a Private Ephemeral Rollup"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "anqa_core"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+ephemeral-rollups-sdk = { version = "0.16.2", features = ["anchor-compat", "access-control"] }
+# Required by `#[zero_copy]`: the book is Pod-backed so it is never deserialized
+# onto the 4KB BPF stack. See state/book.rs.
+bytemuck = { version = "1.23", features = ["derive", "min_const_generics"] }
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
