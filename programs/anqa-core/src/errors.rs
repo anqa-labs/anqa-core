@@ -32,6 +32,8 @@ pub enum AnqaError {
     MakerPortfolioMissing,
     #[msg("asset index out of range")]
     BadAssetIndex,
+    #[msg("cancel resting orders before withdrawing")]
+    WithdrawWithRestingOrders,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

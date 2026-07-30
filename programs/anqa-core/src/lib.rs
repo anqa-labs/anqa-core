@@ -84,6 +84,12 @@ pub mod anqa_core {
         instructions::deposit::handler(ctx, amount)
     }
 
+    /// Base layer: withdraw collateral. Requires a flat account — the kernel
+    /// will not release funds out from under an open position.
+    pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
+        instructions::withdraw::handler(ctx, amount)
+    }
+
     /// Base layer: delegate the book into the ephemeral rollup.
     pub fn delegate_book(ctx: Context<DelegateBook>, market_id: u64) -> Result<()> {
         instructions::delegate_book::handler(ctx, market_id)

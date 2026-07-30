@@ -43,7 +43,15 @@ Deployed to devnet at `4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j`.
 - **Portfolios** — per-trader margin accounts (9.3KB of kernel state), also the
   trader's seat and the natural unit of read permission inside a private rollup.
 - **Tokens move in exactly two instructions** — `deposit` and `withdraw`. Never
-  on a fill.
+  on a fill. Withdrawal is strict by design: the kernel requires a flat account
+  (no open positions), settles negative PnL out of principal first, and refuses
+  to release anything it cannot prove is the trader's. Anqa additionally requires
+  resting orders to be cancelled, since their reserved margin is bookkeeping the
+  kernel cannot see. This is the visible end of *losses are senior, wins are
+  junior*.
+- **Order margin is reserved at placement**, not only checked at fill — otherwise
+  an account could paper the book with orders it cannot honour and fail only
+  after the book was walked.
 - **Delegation** — the book hands off to the ephemeral rollup validator, after
   which base-chain reads are frozen.
 
