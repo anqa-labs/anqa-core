@@ -7,6 +7,7 @@ pub mod deposit_ledger;
 pub mod internal_oracle;
 pub mod oracle;
 pub mod risk;
+pub mod tape;
 
 pub use book::*;
 pub use market::*;
@@ -17,3 +18,4 @@ pub use deposit_ledger::*;
 pub use internal_oracle::*;
 pub use oracle::*;
 pub use risk::*;
+pub use tape::*;

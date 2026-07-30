@@ -178,6 +178,45 @@ pub mod anqa_core {
         instructions::reanchor_oracle::handler(ctx, asset_index)
     }
 
+    /// Base layer: create the public fill tape — the one account in the dark
+    /// set the whole world may read.
+    pub fn initialize_tape(ctx: Context<InitializeTape>, market_id: u64) -> Result<()> {
+        instructions::initialize_tape::handler(ctx, market_id)
+    }
+
+    /// Base layer, admin: flip a market between lit and dark matching.
+    pub fn set_dark(ctx: Context<SetDark>, dark: bool) -> Result<()> {
+        instructions::set_dark::handler(ctx, dark)
+    }
+
+    /// Rollup: settle the oldest pending fill on a dark market through the
+    /// risk kernel and print it to the public tape. Strictly FIFO; driven by
+    /// the engine keeper, callable by anyone.
+    pub fn settle_fill(ctx: Context<SettleFill>) -> Result<()> {
+        instructions::settle_fill::handler(ctx)
+    }
+
+    /// Base layer, admin: permission the book — on a TEE validator only the
+    /// listed members (the engine) can read it. The program signs for the
+    /// book PDA.
+    pub fn create_book_permission(
+        ctx: Context<CreateBookPermission>,
+        market_id: u64,
+        members: Vec<PermissionMember>,
+    ) -> Result<()> {
+        instructions::create_book_permission::handler(ctx, market_id, members)
+    }
+
+    /// Base layer, trader: permission your portfolio — on a TEE validator
+    /// only you and the members you list (the engine) can read it.
+    pub fn create_portfolio_permission(
+        ctx: Context<CreatePortfolioPermission>,
+        market_id: u64,
+        members: Vec<PermissionMember>,
+    ) -> Result<()> {
+        instructions::create_portfolio_permission::handler(ctx, market_id, members)
+    }
+
     // ── delegation: one instruction per account, so each seed validation gets
     //    its own stack frame. All five must run before the first rollup trade.
 
@@ -212,6 +251,10 @@ pub mod anqa_core {
         market_id: u64,
     ) -> Result<()> {
         instructions::delegate_oracle_state::handler(ctx, market_id)
+    }
+
+    pub fn delegate_tape(ctx: Context<DelegateTape>, market_id: u64) -> Result<()> {
+        instructions::delegate_tape::handler(ctx, market_id)
     }
 
     /// Place an order. Crosses the resting book, then rests the remainder; every

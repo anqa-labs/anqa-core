@@ -125,6 +125,44 @@ pub fn handler<'info>(
     };
     require!(!fills.is_empty(), AnqaError::CloseUnfilled);
 
+    // Dark markets: the close crossed the book, but settlement goes through
+    // the pending queue like every dark fill — this closer cannot name its
+    // counterparties either. The position shrinks when `settle_fill` runs;
+    // triggers are swept there, where the position actually dies.
+    if market.dark {
+        let mut queued_notional: u128 = 0;
+        {
+            let mut book = ctx.accounts.book.load_mut()?;
+            require!(
+                book.pending_free() >= fills.len(),
+                AnqaError::PendingFillsFull
+            );
+            for f in fills.iter() {
+                book.push_pending(trader, side, f)?;
+                let notional = market
+                    .quote_notional(f.price_in_ticks, f.base_lots)
+                    .ok_or(AnqaError::MathOverflow)? as u128;
+                queued_notional = queued_notional
+                    .checked_add(notional)
+                    .ok_or(AnqaError::MathOverflow)?;
+            }
+        }
+        let reserve = queued_notional
+            .checked_mul(INITIAL_MARGIN_BPS as u128)
+            .ok_or(AnqaError::MathOverflow)?
+            / 10_000u128;
+        ctx.accounts.portfolio.load_mut()?.reserve(reserve);
+
+        let queued: u64 = fills.iter().map(|f| f.base_lots).sum();
+        emit!(PositionClosed {
+            market_id: market.market_id,
+            base_lots_closed: queued,
+            fully_closed: queued >= position_lots,
+        });
+        msg!("anqa: dark — close queued {} lots for settlement", queued);
+        return Ok(());
+    }
+
     let mut closed_lots: u64 = 0;
     {
         let mut group = ctx.accounts.risk_group.load_mut()?;

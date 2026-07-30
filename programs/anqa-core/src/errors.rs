@@ -34,6 +34,10 @@ pub enum AnqaError {
     EvictedPortfolioMissing,
     #[msg("all trigger slots are in use; cancel one first")]
     TriggerSlotsFull,
+    #[msg("pending-fill queue is full; wait for the settle crank")]
+    PendingFillsFull,
+    #[msg("settle accounts do not match the oldest pending fill")]
+    WrongPendingFill,
     #[msg("a trigger with this id is already armed")]
     DuplicateTriggerId,
     #[msg("asset index out of range")]

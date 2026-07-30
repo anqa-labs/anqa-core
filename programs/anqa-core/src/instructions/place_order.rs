@@ -149,6 +149,60 @@ pub fn handler<'info>(
         (fills, resting, rested, n)
     };
 
+    // --- 2.5 dark markets: queue, don't settle -------------------------------
+    // A taker on a dark market cannot name the makers it crossed, so the fills
+    // it produced go to the book's pending queue and the engine (which can see
+    // the book) drives `settle_fill`. Margin for the queued lots is reserved
+    // exactly like resting-order margin; settlement releases it when the
+    // kernel takes over. A full queue refuses the order outright — an engine
+    // that cannot keep up must not keep matching. No eviction in the dark:
+    // the taker cannot supply the evicted owner's portfolio either.
+    if ctx.accounts.market.dark {
+        require!(resting == 0 || rested, AnqaError::BookSideFull);
+        let mut reserve_total: u128 = 0;
+        if !fills.is_empty() {
+            let mut book = ctx.accounts.book.load_mut()?;
+            require!(
+                book.pending_free() >= fills.len(),
+                AnqaError::PendingFillsFull
+            );
+            for f in fills.iter() {
+                book.push_pending(trader_key, side, f)?;
+                let notional = market
+                    .quote_notional(f.price_in_ticks, f.base_lots)
+                    .ok_or(AnqaError::MathOverflow)? as u128;
+                reserve_total = reserve_total
+                    .checked_add(notional)
+                    .ok_or(AnqaError::MathOverflow)?;
+            }
+        }
+        if resting > 0 {
+            let resting_notional = market
+                .quote_notional(price_in_ticks, resting)
+                .ok_or(AnqaError::MathOverflow)? as u128;
+            reserve_total = reserve_total
+                .checked_add(resting_notional)
+                .ok_or(AnqaError::MathOverflow)?;
+        }
+        if reserve_total > 0 {
+            let reserve = reserve_total
+                .checked_mul(INITIAL_MARGIN_BPS as u128)
+                .ok_or(AnqaError::MathOverflow)?
+                / 10_000u128;
+            ctx.accounts.portfolio.load_mut()?.reserve(reserve);
+        }
+        emit!(OrderAccepted {
+            market_id,
+            client_order_id,
+        });
+        msg!(
+            "anqa: dark — {} fill(s) queued, {} lots resting",
+            fills.len(),
+            resting
+        );
+        return Ok(());
+    }
+
     // --- 3. risk ------------------------------------------------------------
     // Each fill becomes a position pair. The kernel may still refuse — the
     // pre-check above is Anqa's, this is the kernel's, and only the kernel's

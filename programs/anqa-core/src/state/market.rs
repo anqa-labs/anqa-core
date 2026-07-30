@@ -36,6 +36,10 @@ pub struct Market {
     pub maker_rebate_bps: u16,
     /// Halts new orders while set; cancels remain allowed.
     pub paused: bool,
+    /// Dark mode: the book is private and fills settle through the pending
+    /// queue (`settle_fill`) instead of inline — a taker on a dark market
+    /// cannot name the makers it crosses. Flipped by `set_dark` on base.
+    pub dark: bool,
     /// Index of this market's asset inside the risk group's slot array.
     pub asset_index: u32,
     /// Oracle policy. Fixed at creation; changeable only through a timelocked

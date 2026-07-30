@@ -48,6 +48,8 @@ pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";
 /// Relay account mirroring the oracle into the rollup. See state/internal_oracle.rs.
 pub const INTERNAL_ORACLE_SEED: &[u8] = b"anqa_int_oracle";
 pub const TRIGGER_SEED: &[u8] = b"anqa_trigger";
+/// Public fill tape for dark markets. Deliberately never permissioned.
+pub const TAPE_SEED: &[u8] = b"anqa_tape";
 /// Trigger-order slots per portfolio. Triggers ride inside the portfolio so
 /// they delegate with it and fire inside the rollup; a fixed arena keeps the
 /// account `Pod` and its size known. ~48 bytes per slot.

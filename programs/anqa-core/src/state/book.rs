@@ -430,6 +430,32 @@ impl BookSide {
     }
 }
 
+/// A fill that has matched on the book but not yet settled through the risk
+/// kernel. Only exists on a **dark** market: the taker cannot name makers it
+/// cannot see, so crossing and settling decouple — the book matches, the
+/// queue records, and `settle_fill` (driven by the engine, which can see the
+/// book) executes each pair through the kernel.
+#[zero_copy]
+#[derive(Debug)]
+pub struct PendingFill {
+    pub maker: Pubkey,
+    pub taker: Pubkey,
+    pub maker_client_order_id: u64,
+    pub price_in_ticks: u64,
+    pub base_lots: u64,
+    /// 0 = taker bought (taker takes the long leg), 1 = taker sold.
+    pub taker_is_ask: u8,
+    /// 1 when the match fully consumed the maker's resting order.
+    pub maker_order_closed: u8,
+    pub active: u8,
+    pub _pad: [u8; 5],
+}
+
+/// Pending fills the settle crank may lag behind. Small on purpose: a full
+/// queue back-pressures `place_order`, which is the correct failure mode — an
+/// engine that cannot keep up must not keep matching.
+pub const PENDING_FILLS: usize = 16;
+
 #[account(zero_copy)]
 #[derive(Debug)]
 pub struct Book {
@@ -441,8 +467,12 @@ pub struct Book {
     pub last_fill_base_lots: u64,
     pub bids: BookSide,
     pub asks: BookSide,
+    /// FIFO ring of matched-but-unsettled fills (dark markets only).
+    pub pending: [PendingFill; PENDING_FILLS],
+    pub pending_head: u16,
+    pub pending_count: u16,
     pub bump: u8,
-    pub _pad: [u8; 7],
+    pub _pad: [u8; 3],
 }
 
 impl Book {
@@ -468,6 +498,57 @@ impl Book {
             Side::Bid => &mut self.bids,
             Side::Ask => &mut self.asks,
         }
+    }
+
+    // ─────────────────────── pending-fill queue (dark) ───────────────────────
+
+    pub fn pending_free(&self) -> usize {
+        PENDING_FILLS - self.pending_count as usize
+    }
+
+    /// Queue a matched fill for settlement. Caller must have checked capacity.
+    pub fn push_pending(
+        &mut self,
+        taker: Pubkey,
+        taker_side: Side,
+        fill: &FillRecord,
+    ) -> Result<()> {
+        require!(self.pending_free() > 0, AnqaError::PendingFillsFull);
+        let slot =
+            (self.pending_head as usize + self.pending_count as usize) % PENDING_FILLS;
+        self.pending[slot] = PendingFill {
+            maker: fill.maker,
+            taker,
+            maker_client_order_id: fill.maker_client_order_id,
+            price_in_ticks: fill.price_in_ticks,
+            base_lots: fill.base_lots,
+            taker_is_ask: taker_side.as_u8(),
+            maker_order_closed: if fill.maker_order_closed { 1 } else { 0 },
+            active: 1,
+            _pad: [0; 5],
+        };
+        self.pending_count += 1;
+        Ok(())
+    }
+
+    /// The oldest unsettled fill, without removing it. Settlement is strictly
+    /// FIFO — order effects must land in the order the book produced them.
+    pub fn peek_pending(&self) -> Option<&PendingFill> {
+        if self.pending_count == 0 {
+            None
+        } else {
+            Some(&self.pending[self.pending_head as usize])
+        }
+    }
+
+    /// Remove the oldest fill after it settled (or was refused).
+    pub fn pop_pending(&mut self) -> Result<PendingFill> {
+        require!(self.pending_count > 0, AnqaError::OrderNotFound);
+        let fill = self.pending[self.pending_head as usize];
+        self.pending[self.pending_head as usize].active = 0;
+        self.pending_head = ((self.pending_head as usize + 1) % PENDING_FILLS) as u16;
+        self.pending_count -= 1;
+        Ok(fill)
     }
 
     pub fn side(&self, side: Side) -> &BookSide {
