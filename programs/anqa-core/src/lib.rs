@@ -170,6 +170,27 @@ pub mod anqa_core {
         instructions::crank::refresh_handler(ctx)
     }
 
+    /// Create the protocol vault — venue revenue, held apart from both trader
+    /// collateral and insurance.
+    pub fn initialize_protocol_vault(
+        ctx: Context<InitializeProtocolVault>,
+        market_id: u64,
+        insurance_target_bps: u16,
+        post_target_insurance_bps: u16,
+    ) -> Result<()> {
+        instructions::protocol_fees::initialize(
+            ctx,
+            market_id,
+            insurance_target_bps,
+            post_target_insurance_bps,
+        )
+    }
+
+    /// Collect accrued protocol revenue. Cannot reach collateral or insurance.
+    pub fn collect_fees(ctx: Context<CollectFees>, amount: u64) -> Result<()> {
+        instructions::protocol_fees::collect(ctx, amount)
+    }
+
     /// Create the insurance vault — layer 2 of the loss waterfall, held apart
     /// from custody so it cannot be paid out as trader collateral.
     pub fn initialize_insurance_vault(

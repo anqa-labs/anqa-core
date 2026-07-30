@@ -36,6 +36,10 @@ pub const VAULT_SEED: &[u8] = b"anqa_vault";
 /// Layer 2 of the loss waterfall. Kept apart from custody so a bug in the
 /// withdraw path cannot pay out insurance as trader collateral.
 pub const INSURANCE_VAULT_SEED: &[u8] = b"anqa_insurance";
+/// Venue revenue. Separate from custody and insurance so an accounting bug in
+/// one cannot drain another.
+pub const PROTOCOL_VAULT_SEED: &[u8] = b"anqa_protocol";
+pub const PROTOCOL_VAULT_TOKENS_SEED: &[u8] = b"anqa_protocol_tok";
 pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";
 /// Relay account mirroring the oracle into the rollup. See state/internal_oracle.rs.
 pub const INTERNAL_ORACLE_SEED: &[u8] = b"anqa_int_oracle";
