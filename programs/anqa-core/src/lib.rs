@@ -29,7 +29,7 @@ pub mod instructions;
 pub mod state;
 
 use instructions::*;
-use state::{OrderType, Side};
+use state::{OracleKind, OracleParams, OrderType, Side};
 
 declare_id!("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
 
@@ -48,9 +48,8 @@ pub mod anqa_core {
         quote_decimals: u8,
         taker_fee_bps: u16,
         maker_rebate_bps: u16,
-        pyth_feed_id: [u8; 32],
-        max_price_age_secs: u64,
-        max_conf_bps: u16,
+        oracle_kind: OracleKind,
+        oracle: OracleParams,
     ) -> Result<()> {
         instructions::initialize_market::handler(
             ctx,
@@ -61,9 +60,8 @@ pub mod anqa_core {
             quote_decimals,
             taker_fee_bps,
             maker_rebate_bps,
-            pyth_feed_id,
-            max_price_age_secs,
-            max_conf_bps,
+            oracle_kind,
+            oracle,
         )
     }
 
@@ -126,7 +124,11 @@ pub mod anqa_core {
 
     /// Advance mark price and funding for an asset. The mark is read from Pyth;
     /// the caller cannot supply a price.
-    pub fn crank(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> Result<()> {
+    pub fn crank<'info>(
+        ctx: Context<'_, '_, 'info, 'info, Crank<'info>>,
+        asset_index: u32,
+        funding_rate_e9: i128,
+    ) -> Result<()> {
         instructions::crank::handler(ctx, asset_index, funding_rate_e9)
     }
 

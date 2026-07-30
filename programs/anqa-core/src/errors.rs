@@ -40,6 +40,28 @@ pub enum AnqaError {
     OracleConfidenceTooWide,
     #[msg("price update account does not match this market's feed")]
     WrongPriceFeed,
+    #[msg("oracle sources disagree beyond tolerance")]
+    OracleSourcesDisagree,
+    #[msg("mark moved more than the permitted band; breaker tripped")]
+    OracleMoveTooLarge,
+    #[msg("oracle circuit breaker is active")]
+    OracleFrozen,
+    #[msg("market is not paused")]
+    MarketNotPaused,
+    #[msg("only the market authority may do that")]
+    Unauthorized,
+    #[msg("this action is timelocked and not yet due")]
+    TimelockPending,
+    #[msg("insurance fund has insufficient balance")]
+    InsuranceInsufficient,
+    #[msg("account is not eligible for auto-deleveraging")]
+    NotAdlEligible,
+    #[msg("book is still delegated to the rollup")]
+    BookDelegated,
+    #[msg("too many accounts supplied")]
+    TooManyAccounts,
+    #[msg("price is outside the oracle band")]
+    PriceOutsideBand,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

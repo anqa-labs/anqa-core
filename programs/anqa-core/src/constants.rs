@@ -30,3 +30,4 @@ pub const ASSET_SLOTS_SEED: &[u8] = b"anqa_assets";
 pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
 /// Protocol custody for collateral. Never delegated to the rollup.
 pub const VAULT_SEED: &[u8] = b"anqa_vault";
+pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";

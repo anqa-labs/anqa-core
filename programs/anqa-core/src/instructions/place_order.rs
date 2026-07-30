@@ -20,12 +20,13 @@ use anchor_lang::prelude::*;
 use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut, TradeRequestV16, POS_SCALE};
 
 use crate::constants::{
-    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, PORTFOLIO_SEED, RISK_GROUP_SEED,
+    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED, PORTFOLIO_SEED,
+    RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
 use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
 use crate::events::{Fill, OrderAccepted};
-use crate::state::{AssetSlots, Book, Market, OrderType, Portfolio, RiskGroup, Side};
+use crate::state::{AssetSlots, Book, Market, OracleState, OrderType, Portfolio, RiskGroup, Side};
 
 #[derive(Accounts)]
 pub struct PlaceOrder<'info> {
@@ -46,6 +47,11 @@ pub struct PlaceOrder<'info> {
 
     #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
+
+    /// Last accepted mark plus the circuit breaker. Read, never written, here:
+    /// trading references the mark but must not be able to move it.
+    #[account(seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
+    pub oracle_state: Account<'info, OracleState>,
 
     /// The taker's margin account.
     #[account(
@@ -73,14 +79,30 @@ pub fn handler<'info>(
     let market_id = market.market_id;
     let asset_index = market.asset_index as usize;
 
+    // --- 0. is this price anywhere near reality? -----------------------------
+    // A perp fill mints a position at its execution price and the mark instantly
+    // revalues it, so an off-market trade creates value out of nothing at the
+    // vault's expense. The book still discovers price — this only bounds how far
+    // it may wander from the oracle. Also fails when the mark is stale or the
+    // breaker is tripped, which halts trading rather than trading blind.
+    let oracle = &ctx.accounts.oracle_state;
+    require!(
+        oracle.within_band(&market.oracle, price_in_ticks)?,
+        AnqaError::PriceOutsideBand
+    );
+    let mark = oracle.live_mark(&market.oracle)?;
+
     // --- 1. can this trader afford the order at all? -------------------------
     // The kernel only sees positions; a resting order is invisible to it. So we
     // check up front against certified equity, counting margin already committed
     // to open positions *and* to this trader's other resting orders. Without
     // this an account could paper the book with orders it cannot honour and only
     // fail at match time, after the book has been walked.
+    // Size margin off whichever is worse for us — a resting bid far below the
+    // mark must not reserve less margin than the exposure it will actually take.
+    let margin_price = price_in_ticks.max(mark);
     let order_notional = market
-        .quote_notional(price_in_ticks, base_lots)
+        .quote_notional(margin_price, base_lots)
         .ok_or(AnqaError::MathOverflow)? as u128;
     let order_margin = order_notional
         .checked_mul(INITIAL_MARGIN_BPS as u128)
@@ -143,6 +165,14 @@ pub fn handler<'info>(
                         .unwrap_or(false)
                 })
                 .ok_or(AnqaError::MakerPortfolioMissing)?;
+
+            // Resting orders were banded when placed, but the mark moves. Check
+            // again at execution so a stale resting order cannot be crossed at a
+            // price that is now far from reality.
+            require!(
+                band_ok(f.price_in_ticks, mark, market.oracle.max_band_bps),
+                AnqaError::PriceOutsideBand
+            );
 
             let maker_loader = AccountLoader::<Portfolio>::try_from(maker_ai)?;
             let mut maker = maker_loader.load_mut()?;
@@ -228,4 +258,13 @@ pub fn handler<'info>(
         resting
     );
     Ok(())
+}
+
+/// Band check against a mark already validated by the caller.
+fn band_ok(price: u64, mark: u64, max_band_bps: u16) -> bool {
+    if max_band_bps == 0 || mark == 0 {
+        return true;
+    }
+    let diff = mark.abs_diff(price) as u128;
+    diff.saturating_mul(10_000) / mark as u128 <= max_band_bps as u128
 }

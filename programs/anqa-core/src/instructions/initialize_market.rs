@@ -2,8 +2,8 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{BOOK_SEED, MARKET_SEED};
-use crate::state::{Book, Market};
+use crate::constants::{BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED};
+use crate::state::{Book, Market, OracleKind, OracleParams, OracleState};
 
 #[derive(Accounts)]
 #[instruction(market_id: u64)]
@@ -30,6 +30,15 @@ pub struct InitializeMarket<'info> {
     )]
     pub book: AccountLoader<'info, Book>,
 
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + OracleState::INIT_SPACE,
+        seeds = [ORACLE_STATE_SEED, &market_id.to_le_bytes()],
+        bump
+    )]
+    pub oracle_state: Account<'info, OracleState>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -42,9 +51,8 @@ pub fn handler(
     quote_decimals: u8,
     taker_fee_bps: u16,
     maker_rebate_bps: u16,
-    pyth_feed_id: [u8; 32],
-    max_price_age_secs: u64,
-    max_conf_bps: u16,
+    oracle_kind: OracleKind,
+    oracle: OracleParams,
 ) -> Result<()> {
     let market = &mut ctx.accounts.market;
     market.market_id = market_id;
@@ -58,13 +66,16 @@ pub fn handler(
     market.paused = false;
     market.seat_count = 0;
     market.asset_index = 0;
-    market.pyth_feed_id = pyth_feed_id;
-    market.max_price_age_secs = max_price_age_secs;
-    market.max_conf_bps = max_conf_bps;
+    market.oracle = oracle;
+    market.oracle_kind = oracle_kind;
     market.bump = ctx.bumps.market;
 
     let mut book = ctx.accounts.book.load_init()?;
     book.init(market_id, ctx.bumps.book);
+
+    let os = &mut ctx.accounts.oracle_state;
+    os.market_id = market_id;
+    os.bump = ctx.bumps.oracle_state;
 
     msg!("anqa: market {} initialized", market_id);
     Ok(())

@@ -29,13 +29,11 @@ pub struct Market {
     pub seat_count: u64,
     /// Index of this market's asset inside the risk group's slot array.
     pub asset_index: u32,
-    /// Pyth feed this market marks against. Fixed at creation — a market must
-    /// not be able to switch the oracle that decides its liquidations.
-    pub pyth_feed_id: [u8; 32],
-    /// Refuse prices older than this, in seconds.
-    pub max_price_age_secs: u64,
-    /// Refuse prices whose confidence interval exceeds this fraction of price.
-    pub max_conf_bps: u16,
+    /// Oracle policy. Fixed at creation; changeable only through a timelocked
+    /// admin path, because it governs this market's own liquidations.
+    pub oracle: crate::state::OracleParams,
+    /// Which oracle backend this market reads.
+    pub oracle_kind: crate::state::OracleKind,
     pub bump: u8,
 }
 

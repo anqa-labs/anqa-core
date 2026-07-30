@@ -12,7 +12,7 @@ use percolator::{
 
 use crate::constants::{ASSET_SLOTS_SEED, MARKET_SEED, MAX_ASSETS, RISK_GROUP_SEED};
 use crate::errors::{map_risk, AnqaError};
-use crate::state::{read_mark, AssetSlots, AssetTag, Market, RiskGroup};
+use crate::state::{read_pyth, AssetSlots, AssetTag, Market, RiskGroup};
 
 /// Anqa's launch risk parameters.
 ///
@@ -94,14 +94,13 @@ pub fn handler(
     );
 
     let m = &ctx.accounts.market;
-    let opening_mark = read_mark(
+    let opening_mark = read_pyth(
         &ctx.accounts.price_update,
-        &m.pyth_feed_id,
-        m.max_price_age_secs,
-        m.max_conf_bps,
-        m.quote_decimals,
+        &m.oracle.feed_id,
+        m.oracle.max_age_secs,
+        m.oracle.max_conf_bps,
     )?
-    .price;
+    .to_quote_atoms(m.quote_decimals)?;
 
     let cfg = anqa_risk_config(asset_count);
     let slot = Clock::get()?.slot;
