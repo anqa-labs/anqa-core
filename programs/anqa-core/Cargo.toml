@@ -27,9 +27,10 @@ ephemeral-rollups-sdk = { version = "0.16.2", features = ["anchor-compat", "acce
 # Required by `#[zero_copy]`: the book is Pod-backed so it is never deserialized
 # onto the 4KB BPF stack. See state/book.rs.
 bytemuck = { version = "1.23", features = ["derive", "min_const_generics"] }
-# The risk engine. Our fork of aeyakovenko/percolator (Apache-2.0) — the book
-# decides who trades at what price, this decides whether they may.
-percolator = { git = "https://github.com/anqa-labs/percolator" }
+# The risk engine — vendored, not a dependency. See vendor/percolator/NOTICE.
+# Vendored because we modify it (portfolio sizing) and because a venue's margin
+# arithmetic should be reviewable in the same repo as the code that calls it.
+percolator = { path = "../../vendor/percolator" }
 # Pyth pull oracle. 1.2.0 is the last line that targets Anchor 0.32.x; 2.0
 # requires Anchor 1.x, which we are not on.
 pyth-solana-receiver-sdk = "1.2.0"

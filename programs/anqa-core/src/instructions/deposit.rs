@@ -29,12 +29,13 @@ pub struct Deposit<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Must already exist — see `initialize_ledger`. The ledger is a permanent
+    /// record, not something a deposit conjures into being.
     #[account(
-        init_if_needed,
-        payer = trader,
-        space = 8 + UserDepositLedger::INIT_SPACE,
+        mut,
         seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump
+        bump = ledger.bump,
+        constraint = ledger.owner == trader.key() @ AnqaError::NotOrderOwner
     )]
     pub ledger: Account<'info, UserDepositLedger>,
 
@@ -74,11 +75,7 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     // 2. Record it on the ledger. The basket is credited later by
     //    `claim_deposit`, which may run in a rollup this instruction cannot
     //    reach.
-    let ledger = &mut ctx.accounts.ledger;
-    ledger.owner = ctx.accounts.trader.key();
-    ledger.market_id = ctx.accounts.market.market_id;
-    ledger.bump = ctx.bumps.ledger;
-    ledger.credit_deposit(amount)?;
+    ctx.accounts.ledger.credit_deposit(amount)?;
 
     msg!("anqa: deposited {} to the vault and ledger", amount);
     Ok(())

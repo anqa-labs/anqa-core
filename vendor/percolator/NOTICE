@@ -1,0 +1,50 @@
+Percolator — vendored into Anqa
+================================
+
+Upstream:  https://github.com/aeyakovenko/percolator
+License:   Apache-2.0 (see LICENSE, retained unmodified)
+Vendored:  2026-07-30
+
+WHY VENDORED RATHER THAN DEPENDED ON
+------------------------------------
+Two reasons.
+
+1. We modify it. The upstream portfolio account is sized for 16 assets
+   (V16_MAX_PORTFOLIO_ASSETS_N), which makes it 9,291 bytes. Anqa trades three
+   assets, and every trader's portfolio is delegated into an ephemeral rollup
+   where commit cost scales with account size. Reducing that capacity is a
+   deliberate, load-bearing change and it belongs in this repo's history.
+
+2. This library owns the margin arithmetic that decides who is solvent. It
+   should be reviewable in the same repository as the code that calls it, not
+   resolved from a remote at build time.
+
+MODIFICATIONS FROM UPSTREAM
+---------------------------
+Recorded here as Apache-2.0 section 4(b) requires. Any change to the account
+layout must also bump V16_LAYOUT_DISCRIMINATOR and update the compile-time size
+assertion, both of which upstream provides for exactly this purpose.
+
+  2026-07-30  V16_MAX_PORTFOLIO_ASSETS_N: 16 -> 4
+              V16_LAYOUT_DISCRIMINATOR:   17 -> 1017
+              size assertion:             9291 -> 2859 bytes
+
+              Rationale: the constant sizes PortfolioAccountV16Account.legs and,
+              via PORTFOLIO_SOURCE_DOMAIN_CAP (= 2N), its source_domains. At 16
+              the account is 9,291 bytes, ~75% of which is capacity for assets
+              Anqa does not trade. Every trader's portfolio is delegated into an
+              ephemeral rollup and commit cost scales with account size, so that
+              capacity is a tax on every commit, per trader, forever. Anqa trades
+              three assets; 4 leaves one spare slot. Result: 2,859 bytes, a 69%
+              reduction.
+
+              The layout discriminator is bumped so accounts written under the
+              old shape cannot deserialize under the new one.
+
+UPSTREAM CHARACTER
+------------------
+Upstream labels this "educational research project. Not production ready. Not
+audited." It ships 244 Kani proofs and 51 function-contract proofs covering
+no-cross-domain-value-theft, account-local safety, bounded progress and
+arithmetic discipline. Those proofs are the reason it was chosen; the label is
+the reason it must be audited alongside our wrapper before mainnet.

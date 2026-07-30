@@ -5,3 +5,6 @@ target
 node_modules
 test-ledger
 .yarn
+
+# vendored percolator builds into the workspace target dir
+vendor/percolator/target

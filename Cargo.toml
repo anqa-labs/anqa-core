@@ -2,6 +2,10 @@
 members = [
     "programs/*"
 ]
+# Its own workspace root — it carries [workspace.metadata.kani], which is the
+# proof configuration and the reason this library was chosen. Excluded here so
+# `cargo kani` still works inside it; depended on by path from the program.
+exclude = ["vendor/percolator"]
 resolver = "2"
 
 [profile.release]

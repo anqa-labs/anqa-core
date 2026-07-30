@@ -80,6 +80,28 @@ pub mod anqa_core {
         instructions::initialize_vault::handler(ctx, market_id)
     }
 
+    /// Base layer: create the deposit ledger, empty. Must exist before any
+    /// deposit — it is the permanent record the rollup reads.
+    pub fn initialize_ledger(ctx: Context<InitializeLedger>) -> Result<()> {
+        instructions::basket::initialize_ledger(ctx)
+    }
+
+    /// Move the basket into the rollup. Session-based: the trader chooses when
+    /// their state goes in and when it comes home.
+    pub fn delegate_portfolio(ctx: Context<DelegatePortfolio>, market_id: u64) -> Result<()> {
+        instructions::basket::delegate_portfolio(ctx, market_id)
+    }
+
+    /// Checkpoint the basket to base layer without leaving the rollup.
+    pub fn commit_portfolio(ctx: Context<CommitPortfolio>) -> Result<()> {
+        instructions::basket::commit_portfolio(ctx)
+    }
+
+    /// Commit and return the basket to base layer.
+    pub fn undelegate_portfolio(ctx: Context<CommitPortfolio>) -> Result<()> {
+        instructions::basket::undelegate_portfolio(ctx)
+    }
+
     /// Base layer: open a margin account. This is also the trader's seat.
     pub fn open_portfolio(ctx: Context<OpenPortfolio>) -> Result<()> {
         instructions::open_portfolio::handler(ctx)

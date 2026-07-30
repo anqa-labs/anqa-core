@@ -184,7 +184,15 @@ async function main() {
     const isPayer = kp.publicKey.equals(payer.publicKey);
     const o = program.methods.openPortfolio().accounts({ trader: kp.publicKey, market, portfolio: pf, systemProgram: SystemProgram.programId });
     await (isPayer ? o.rpc() : o.signers([kp]).rpc()); await sleep(PACE);
-    // Deposit is base-layer only now: tokens + ledger. The basket is credited
+    // The ledger is created empty and explicitly — it is a permanent record,
+    // not something a deposit conjures into being.
+    const li = program.methods.initializeLedger().accounts({
+      trader: kp.publicKey, market, ledger: ledgerOf(kp.publicKey),
+      systemProgram: SystemProgram.programId,
+    });
+    await (isPayer ? li.rpc() : li.signers([kp]).rpc()); await sleep(PACE);
+
+    // Deposit is base-layer only: tokens + ledger. The basket is credited
     // separately by claim_deposit, which can run inside a rollup.
     const d = program.methods.deposit(new BN(COLLATERAL)).accounts({
       trader: kp.publicKey, market, ledger: ledgerOf(kp.publicKey),
