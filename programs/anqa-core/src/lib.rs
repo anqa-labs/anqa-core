@@ -29,6 +29,7 @@ pub mod instructions;
 pub mod state;
 
 use instructions::*;
+use instructions::place_multiple::QuoteParams;
 use state::{OracleKind, OracleParams, OrderType, Side};
 
 declare_id!("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
@@ -147,6 +148,27 @@ pub mod anqa_core {
     /// Liquidate an unhealthy account. Permissionless; refuses while healthy.
     pub fn liquidate(ctx: Context<Liquidate>, asset_index: u32) -> Result<()> {
         instructions::liquidate::handler(ctx, asset_index)
+    }
+
+    /// Pull every resting order this trader has. The panic button — permitted
+    /// even while the market is paused, since a pause must not trap orders.
+    pub fn cancel_all_orders(ctx: Context<CancelBulk>) -> Result<()> {
+        instructions::cancel_bulk::cancel_all(ctx)
+    }
+
+    /// Pull only quotes at or more aggressive than a price, leaving the passive
+    /// remainder working. The everyday risk tool for a maker.
+    pub fn cancel_up_to(
+        ctx: Context<CancelBulk>,
+        side: Side,
+        price_in_ticks: u64,
+    ) -> Result<()> {
+        instructions::cancel_bulk::cancel_up_to(ctx, side, price_in_ticks)
+    }
+
+    /// Post a ladder of post-only quotes in one transaction. All-or-nothing.
+    pub fn place_multiple(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<()> {
+        instructions::place_multiple::handler(ctx, quotes)
     }
 
     /// Rollup: cancel one of your resting orders.

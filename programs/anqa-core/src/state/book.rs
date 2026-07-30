@@ -273,6 +273,58 @@ impl BookSide {
         Err(AnqaError::OrderNotFound.into())
     }
 
+    /// Remove every order owned by `trader`, optionally only those more
+    /// aggressive than `price_limit`.
+    ///
+    /// "More aggressive" means closer to crossing: for a bid, a *higher* price;
+    /// for an ask, a *lower* one. Since the list is already sorted best-first,
+    /// the aggressive orders sit at the head — but other traders' orders are
+    /// interleaved, so we still walk the whole side.
+    ///
+    /// Returns how many were removed and the sum of `price x lots`, which the
+    /// caller scales into the margin it should release.
+    pub fn cancel_matching(
+        &mut self,
+        trader: &Pubkey,
+        side: Side,
+        price_limit: Option<u64>,
+    ) -> (u32, u128) {
+        let mut prev = NIL;
+        let mut cursor = self.head;
+        let mut removed = 0u32;
+        let mut freed: u128 = 0;
+
+        while cursor != NIL {
+            let o = self.orders[cursor as usize];
+            let next = o.next;
+
+            let aggressive_enough = match price_limit {
+                None => true,
+                Some(limit) => match side {
+                    Side::Bid => o.price_in_ticks >= limit,
+                    Side::Ask => o.price_in_ticks <= limit,
+                },
+            };
+
+            if o.active == 1 && o.trader == *trader && aggressive_enough {
+                if prev == NIL {
+                    self.head = next;
+                } else {
+                    self.orders[prev as usize].next = next;
+                }
+                freed = freed.saturating_add((o.price_in_ticks as u128) * (o.base_lots as u128));
+                self.free_slot(cursor);
+                self.count = self.count.saturating_sub(1);
+                removed = removed.saturating_add(1);
+                // `prev` is unchanged: the node it pointed at is gone.
+            } else {
+                prev = cursor;
+            }
+            cursor = next;
+        }
+        (removed, freed)
+    }
+
     /// Base lots resting at or better than `limit`, within the cross budget.
     /// `self` is the resting side.
     fn liquidity_within(&self, resting_side: Side, limit: u64) -> u64 {
