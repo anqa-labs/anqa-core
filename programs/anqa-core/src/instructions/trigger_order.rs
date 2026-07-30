@@ -12,9 +12,9 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{MARKET_SEED, ORACLE_STATE_SEED, TRIGGER_SEED};
+use crate::constants::{MARKET_SEED, ORACLE_STATE_SEED, PORTFOLIO_SEED, TRIGGER_SEED};
 use crate::errors::AnqaError;
-use crate::state::{Market, OracleState, TriggerDirection, TriggerOrder};
+use crate::state::{Market, OracleState, Portfolio, TriggerDirection, TriggerOrder};
 
 #[event]
 pub struct TriggerPlaced {
@@ -113,12 +113,18 @@ pub fn cancel(ctx: Context<CancelTriggerOrder>) -> Result<()> {
     Ok(())
 }
 
-/// Check that a trigger is armed and close it out.
+/// Check that a trigger is armed, and consume it.
 ///
-/// Kept separate from the close itself: this instruction validates and consumes
-/// the trigger, and the caller pairs it with `close_position` in the same
-/// transaction. Splitting them keeps each instruction's account list small
-/// enough to fit alongside the maker portfolios a close needs.
+/// **Must be paired with `close_position` in the same transaction.** The two are
+/// separate instructions because a close needs maker portfolios in
+/// `remaining_accounts`, and merging would blow the account limit.
+///
+/// That split used to be exploitable: firing closed the trigger account
+/// unconditionally, so a keeper could fire a stop while the owner was flat and
+/// silently destroy their protection. The guard below is the fix — a trigger
+/// can only be consumed when there is actually a position for it to protect, so
+/// a keeper firing it alone either performs the close it was paired with or
+/// fails outright.
 #[derive(Accounts)]
 pub struct FireTriggerOrder<'info> {
     /// Permissionless. Reclaims the trigger's rent as the fee for keeping the
@@ -141,6 +147,15 @@ pub struct FireTriggerOrder<'info> {
         constraint = trigger.market_id == market.market_id @ AnqaError::WrongMarket
     )]
     pub trigger: Account<'info, TriggerOrder>,
+
+    /// The owner's margin account. Read-only here, but required: a trigger must
+    /// not be consumable unless there is a position for it to act on.
+    #[account(
+        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trigger.owner.as_ref()],
+        bump,
+        constraint = portfolio.load()?.owner == trigger.owner @ AnqaError::NotOrderOwner
+    )]
+    pub portfolio: AccountLoader<'info, Portfolio>,
 }
 
 pub fn fire(ctx: Context<FireTriggerOrder>) -> Result<()> {
@@ -151,6 +166,17 @@ pub fn fire(ctx: Context<FireTriggerOrder>) -> Result<()> {
     let t = &ctx.accounts.trigger;
 
     require!(t.is_armed(mark), AnqaError::TriggerNotArmed);
+
+    // Without this, a keeper could fire a stop against a flat account and burn
+    // the owner's protection for free.
+    require!(
+        ctx.accounts
+            .portfolio
+            .load()?
+            .current_position(market.asset_index)
+            .is_some(),
+        AnqaError::NoOpenPosition
+    );
 
     emit!(TriggerFired {
         market_id: t.market_id,

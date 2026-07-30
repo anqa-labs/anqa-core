@@ -250,6 +250,25 @@ pub mod anqa_core {
         instructions::trigger_order::fire(ctx)
     }
 
+    /// Amend a resting order. Shrinking at the same price keeps queue
+    /// position; growing or repricing requeues, because both are new claims on
+    /// the book and time priority would otherwise be decorative.
+    pub fn modify_order(
+        ctx: Context<ModifyOrder>,
+        side: Side,
+        client_order_id: u64,
+        new_price_in_ticks: u64,
+        new_base_lots: u64,
+    ) -> Result<()> {
+        instructions::modify_order::handler(
+            ctx,
+            side,
+            client_order_id,
+            new_price_in_ticks,
+            new_base_lots,
+        )
+    }
+
     /// Rollup: cancel one of your resting orders.
     pub fn cancel_order(
         ctx: Context<CancelOrder>,

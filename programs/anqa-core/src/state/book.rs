@@ -273,6 +273,41 @@ impl BookSide {
         Err(AnqaError::OrderNotFound.into())
     }
 
+    /// Locate an order by owner and client id, returning `(price, lots)`.
+    pub fn find_order(&self, trader: &Pubkey, client_order_id: u64) -> Option<(u64, u64)> {
+        let mut cursor = self.head;
+        while cursor != NIL {
+            let o = self.orders[cursor as usize];
+            if o.active == 1 && o.trader == *trader && o.client_order_id == client_order_id {
+                return Some((o.price_in_ticks, o.base_lots));
+            }
+            cursor = o.next;
+        }
+        None
+    }
+
+    /// Shrink an order without moving it. Only ever called with a smaller size,
+    /// so queue position is preserved without disadvantaging anyone behind it.
+    pub fn resize_in_place(
+        &mut self,
+        trader: &Pubkey,
+        client_order_id: u64,
+        new_base_lots: u64,
+    ) -> Result<()> {
+        let mut cursor = self.head;
+        while cursor != NIL {
+            let o = self.orders[cursor as usize];
+            if o.active == 1 && o.trader == *trader && o.client_order_id == client_order_id {
+                require!(new_base_lots <= o.base_lots, AnqaError::InvalidSize);
+                require!(new_base_lots > 0, AnqaError::InvalidSize);
+                self.orders[cursor as usize].base_lots = new_base_lots;
+                return Ok(());
+            }
+            cursor = o.next;
+        }
+        Err(AnqaError::OrderNotFound.into())
+    }
+
     /// Remove every order owned by `trader`, optionally only those more
     /// aggressive than `price_limit`.
     ///
