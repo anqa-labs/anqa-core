@@ -28,6 +28,9 @@ pub const MAX_ASSETS: usize = 3;
 pub const RISK_GROUP_SEED: &[u8] = b"anqa_risk";
 pub const ASSET_SLOTS_SEED: &[u8] = b"anqa_assets";
 pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
+/// Base-layer record of a trader's deposits. Read from the rollup, never delegated.
+pub const LEDGER_SEED: &[u8] = b"anqa_ledger";
+pub const WITHDRAW_RECEIPT_SEED: &[u8] = b"anqa_wreceipt";
 /// Protocol custody for collateral. Never delegated to the rollup.
 pub const VAULT_SEED: &[u8] = b"anqa_vault";
 /// Layer 2 of the loss waterfall. Kept apart from custody so a bug in the

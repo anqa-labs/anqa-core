@@ -102,6 +102,14 @@ pub struct Portfolio {
     /// when the fill is refused and the book has already been walked. Anqa
     /// therefore reserves margin at placement and releases it on cancel or fill.
     pub reserved_margin: [u8; 16],
+    /// How much of the base-layer ledger's `deposited` this basket has already
+    /// absorbed, little-endian u64.
+    ///
+    /// The ledger only grows and the basket remembers where it got to, so
+    /// claiming credits exactly the difference. Replay is a no-op, and the
+    /// rollup never has to write anything on base layer to record that it
+    /// claimed — which it could not do anyway.
+    pub claimed_high_water: [u8; 8],
     pub inner: [u8; PORTFOLIO_BYTES],
 }
 
@@ -114,6 +122,13 @@ impl Portfolio {
     }
     pub fn account_mut(&mut self) -> &mut PortfolioAccountV16Account {
         bytemuck::from_bytes_mut(&mut self.inner)
+    }
+
+    pub fn claimed(&self) -> u64 {
+        u64::from_le_bytes(self.claimed_high_water)
+    }
+    pub fn set_claimed(&mut self, v: u64) {
+        self.claimed_high_water = v.to_le_bytes();
     }
 
     pub fn reserved(&self) -> u128 {

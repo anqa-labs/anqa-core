@@ -64,6 +64,12 @@ pub enum AnqaError {
     PriceOutsideBand,
     #[msg("tick size and lot size must be non-zero")]
     InvalidTickSize,
+    #[msg("nothing available to claim or reserve")]
+    NothingToClaim,
+    #[msg("withdraw receipt already authorized")]
+    ReceiptAlreadyProcessed,
+    #[msg("withdraw receipt has not been authorized by the risk engine")]
+    ReceiptNotAuthorized,
     #[msg("no open position on this market")]
     NoOpenPosition,
     #[msg("close could not be filled at the given price")]

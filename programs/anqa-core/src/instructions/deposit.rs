@@ -1,22 +1,26 @@
 //! Deposit collateral.
 //!
-//! One of exactly two instructions in this program where tokens actually move
-//! (the other is `withdraw`). Trades never transfer tokens — a fill mints a
-//! long/short pair in two margin accounts and nothing is delivered. Value only
-//! crosses the custody boundary here.
+//! One of exactly two instructions where tokens actually move (the other is
+//! `settle_withdraw`). Trades never transfer tokens — a fill mints a long/short
+//! pair in two margin accounts and nothing is delivered.
+//!
+//! This runs on **base layer only** and does two things: move the tokens into
+//! the vault, and record them on the trader's ledger. It deliberately does NOT
+//! credit the risk engine, because the basket it would credit may be delegated
+//! to a rollup and unwritable from here. `claim_deposit` does that from
+//! whichever side the basket currently lives on, reading the ledger's monotonic
+//! total against the basket's high-water mark.
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
-use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut};
 
-use crate::constants::{
-    ASSET_SLOTS_SEED, MARKET_SEED, PORTFOLIO_SEED, RISK_GROUP_SEED, VAULT_SEED,
-};
-use crate::errors::{map_risk, AnqaError};
-use crate::state::{AssetSlots, Market, Portfolio, RiskGroup};
+use crate::constants::{LEDGER_SEED, MARKET_SEED, VAULT_SEED};
+use crate::errors::AnqaError;
+use crate::state::{Market, UserDepositLedger};
 
 #[derive(Accounts)]
 pub struct Deposit<'info> {
+    #[account(mut)]
     pub trader: Signer<'info>,
 
     #[account(
@@ -26,26 +30,13 @@ pub struct Deposit<'info> {
     pub market: Account<'info, Market>,
 
     #[account(
-        mut,
-        seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()],
+        init_if_needed,
+        payer = trader,
+        space = 8 + UserDepositLedger::INIT_SPACE,
+        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
         bump
     )]
-    pub risk_group: AccountLoader<'info, RiskGroup>,
-
-    #[account(
-        mut,
-        seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()],
-        bump
-    )]
-    pub asset_slots: AccountLoader<'info, AssetSlots>,
-
-    #[account(
-        mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
-    )]
-    pub portfolio: AccountLoader<'info, Portfolio>,
+    pub ledger: Account<'info, UserDepositLedger>,
 
     /// Trader's USDC account.
     #[account(mut)]
@@ -61,6 +52,7 @@ pub struct Deposit<'info> {
     pub vault: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
@@ -79,16 +71,15 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         amount,
     )?;
 
-    // 2. Tell the kernel. It owns the accounting; we only own custody.
-    let mut group = ctx.accounts.risk_group.load_mut()?;
-    let n_assets = group.asset_count();
-    let mut slots = ctx.accounts.asset_slots.load_mut()?;
-    let mut portfolio = ctx.accounts.portfolio.load_mut()?;
+    // 2. Record it on the ledger. The basket is credited later by
+    //    `claim_deposit`, which may run in a rollup this instruction cannot
+    //    reach.
+    let ledger = &mut ctx.accounts.ledger;
+    ledger.owner = ctx.accounts.trader.key();
+    ledger.market_id = ctx.accounts.market.market_id;
+    ledger.bump = ctx.bumps.ledger;
+    ledger.credit_deposit(amount)?;
 
-    let mut view = MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
-    let mut pv = PortfolioV16ViewMut::new(portfolio.account_mut());
-    map_risk(view.deposit_not_atomic(&mut pv, amount as u128))?;
-
-    msg!("anqa: deposited {} collateral", amount);
+    msg!("anqa: deposited {} to the vault and ledger", amount);
     Ok(())
 }

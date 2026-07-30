@@ -103,6 +103,28 @@ pub mod anqa_core {
         instructions::withdraw::handler(ctx, amount)
     }
 
+    /// Credit a basket with deposits recorded on the base-layer ledger.
+    /// Runs wherever the basket lives; idempotent via its high-water mark.
+    pub fn claim_deposit(ctx: Context<ClaimDeposit>) -> Result<()> {
+        instructions::boundary::claim_deposit(ctx)
+    }
+
+    /// Base layer: reserve collateral and open a withdrawal receipt.
+    pub fn request_withdraw(ctx: Context<RequestWithdraw>, amount: u64) -> Result<()> {
+        instructions::boundary::request_withdraw(ctx, amount)
+    }
+
+    /// Wherever the basket lives: let the risk engine judge the request and
+    /// write the true amount into the receipt.
+    pub fn authorize_withdraw(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
+        instructions::boundary::authorize_withdraw(ctx)
+    }
+
+    /// Base layer: pay out an authorized receipt and release the reservation.
+    pub fn settle_withdraw(ctx: Context<SettleWithdraw>) -> Result<()> {
+        instructions::boundary::settle_withdraw(ctx)
+    }
+
     /// Base layer: delegate the book into the ephemeral rollup.
     pub fn delegate_book(ctx: Context<DelegateBook>, market_id: u64) -> Result<()> {
         instructions::delegate_book::handler(ctx, market_id)

@@ -106,6 +106,8 @@ async function main() {
   const oracleState = pda("anqa_oracle");
   const vault = pda("anqa_vault");
   const internalOracle = pda("anqa_int_oracle");
+  const ledgerOf = (k: PublicKey) => pda("anqa_ledger", [k.toBuffer()]);
+  const receiptOf = (k: PublicKey) => pda("anqa_wreceipt", [k.toBuffer()]);
 
   // The crank now reads the relay, not Pyth — because inside a rollup Pyth's
   // accounts are not delegated to us and cannot be read at all. A keeper
@@ -182,11 +184,19 @@ async function main() {
     const isPayer = kp.publicKey.equals(payer.publicKey);
     const o = program.methods.openPortfolio().accounts({ trader: kp.publicKey, market, portfolio: pf, systemProgram: SystemProgram.programId });
     await (isPayer ? o.rpc() : o.signers([kp]).rpc()); await sleep(PACE);
+    // Deposit is base-layer only now: tokens + ledger. The basket is credited
+    // separately by claim_deposit, which can run inside a rollup.
     const d = program.methods.deposit(new BN(COLLATERAL)).accounts({
-      trader: kp.publicKey, market, riskGroup, assetSlots, portfolio: pf,
+      trader: kp.publicKey, market, ledger: ledgerOf(kp.publicKey),
       traderTokenAccount: ata, vault, tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
     });
     await (isPayer ? d.rpc() : d.signers([kp]).rpc()); await sleep(PACE);
+
+    await program.methods.claimDeposit().accounts({
+      caller: payer.publicKey, market, riskGroup, assetSlots,
+      portfolio: pf, ledger: ledgerOf(kp.publicKey),
+    }).rpc(); await sleep(PACE);
     acct[name] = { kp, pf, ata };
   }
   const vaultBal = await rpc(() => connection.getTokenAccountBalance(vault));
@@ -299,17 +309,26 @@ async function main() {
     .accounts({ trader: payer.publicKey, market, book, portfolio: acct.taker.pf })
     .rpc(); await sleep(PACE);
   const before = await rpc(() => connection.getTokenAccountBalance(acct.taker.ata));
+  const receipt = receiptOf(payer.publicKey);
   await program.methods
-    .withdraw(new BN(100_000 * 10 ** DEC))
+    .requestWithdraw(new BN(100_000 * 10 ** DEC))
+    .accounts({ trader: payer.publicKey, market, ledger: ledgerOf(payer.publicKey), receipt, systemProgram: SystemProgram.programId })
+    .rpc(); await sleep(PACE);
+  await program.methods
+    .authorizeWithdraw()
+    .accounts({ trader: payer.publicKey, market, riskGroup, assetSlots, portfolio: acct.taker.pf, receipt })
+    .rpc(); await sleep(PACE);
+  await program.methods
+    .settleWithdraw()
     .accounts({
-      trader: payer.publicKey, market, riskGroup, assetSlots, portfolio: acct.taker.pf,
+      caller: payer.publicKey, market, ledger: ledgerOf(payer.publicKey), receipt,
       traderTokenAccount: acct.taker.ata, vault, tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc(); await sleep(PACE);
   const after = await rpc(() => connection.getTokenAccountBalance(acct.taker.ata));
   check(
     Number(after.value.amount) > Number(before.value.amount),
-    "collateral withdrawn after closing",
+    "withdrawal crossed the boundary: request -> authorize -> settle",
     `+${usdc(Number(after.value.amount) - Number(before.value.amount))} USDC`
   );
 
