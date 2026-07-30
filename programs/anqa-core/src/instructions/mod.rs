@@ -9,6 +9,7 @@ pub mod initialize_market;
 pub mod initialize_risk;
 pub mod initialize_vault;
 pub mod place_order;
+pub mod sync_internal_oracle;
 pub mod withdraw;
 
 pub use cancel_order::*;
@@ -22,4 +23,5 @@ pub use initialize_market::*;
 pub use initialize_risk::*;
 pub use initialize_vault::*;
 pub use place_order::*;
+pub use sync_internal_oracle::*;
 pub use withdraw::*;

@@ -122,6 +122,13 @@ pub mod anqa_core {
         )
     }
 
+    /// Relay a verified Pyth price into the internal oracle account, so the
+    /// venue can still read a price once the book lives inside the rollup.
+    /// Permissionless — the keeper copies a verified number, it supplies none.
+    pub fn sync_internal_oracle(ctx: Context<SyncInternalOracle>) -> Result<()> {
+        instructions::sync_internal_oracle::handler(ctx)
+    }
+
     /// Advance mark price and funding for an asset. The mark is read from Pyth;
     /// the caller cannot supply a price.
     pub fn crank<'info>(
