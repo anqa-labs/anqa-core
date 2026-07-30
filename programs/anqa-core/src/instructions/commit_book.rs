@@ -1,8 +1,5 @@
-//! Commit book state from the rollup back to base chain.
-//!
-//! `commit_book` checkpoints without giving up the rollup; `commit_and_undelegate`
-//! returns the account to base chain entirely — the escape hatch that keeps the
-//! venue non-custodial even if the rollup stops.
+//! Rollup: checkpoint book state back to base chain without giving up the
+//! rollup. `undelegate_book` is the variant that also returns the account.
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::commit;
@@ -21,7 +18,7 @@ pub struct CommitBook<'info> {
     pub book: AccountLoader<'info, Book>,
 }
 
-pub fn commit_handler(ctx: Context<CommitBook>) -> Result<()> {
+pub fn handler(ctx: Context<CommitBook>) -> Result<()> {
     MagicIntentBundleBuilder::new(
         ctx.accounts.payer.to_account_info(),
         ctx.accounts.magic_context.to_account_info(),
@@ -31,18 +28,5 @@ pub fn commit_handler(ctx: Context<CommitBook>) -> Result<()> {
     .build_and_invoke()?;
 
     msg!("anqa: book committed");
-    Ok(())
-}
-
-pub fn commit_and_undelegate_handler(ctx: Context<CommitBook>) -> Result<()> {
-    MagicIntentBundleBuilder::new(
-        ctx.accounts.payer.to_account_info(),
-        ctx.accounts.magic_context.to_account_info(),
-        ctx.accounts.magic_program.to_account_info(),
-    )
-    .commit_and_undelegate(&[ctx.accounts.book.to_account_info()])
-    .build_and_invoke()?;
-
-    msg!("anqa: book committed and undelegated");
     Ok(())
 }

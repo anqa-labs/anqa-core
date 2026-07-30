@@ -1,5 +1,8 @@
 //! Program-wide constants.
 
+use anchor_lang::prelude::*;
+use ephemeral_rollups_sdk::cpi::DelegateConfig;
+
 /// PDA seeds.
 pub const MARKET_SEED: &[u8] = b"anqa_market";
 pub const BOOK_SEED: &[u8] = b"anqa_book";
@@ -31,6 +34,7 @@ pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
 /// Base-layer record of a trader's deposits. Read from the rollup, never delegated.
 pub const LEDGER_SEED: &[u8] = b"anqa_ledger";
 pub const WITHDRAW_RECEIPT_SEED: &[u8] = b"anqa_wreceipt";
+pub const DEPOSIT_RECEIPT_SEED: &[u8] = b"anqa_dreceipt";
 /// Protocol custody for collateral. Never delegated to the rollup.
 pub const VAULT_SEED: &[u8] = b"anqa_vault";
 /// Layer 2 of the loss waterfall. Kept apart from custody so a bug in the
@@ -44,3 +48,53 @@ pub const ORACLE_STATE_SEED: &[u8] = b"anqa_oracle";
 /// Relay account mirroring the oracle into the rollup. See state/internal_oracle.rs.
 pub const INTERNAL_ORACLE_SEED: &[u8] = b"anqa_int_oracle";
 pub const TRIGGER_SEED: &[u8] = b"anqa_trigger";
+/// Trigger-order slots per portfolio. Triggers ride inside the portfolio so
+/// they delegate with it and fire inside the rollup; a fixed arena keeps the
+/// account `Pod` and its size known. ~48 bytes per slot.
+pub const MAX_TRIGGERS_PER_PORTFOLIO: usize = 4;
+
+// ───────────────────────────── delegation ─────────────────────────────
+
+/// MagicBlock's shared devnet validator identity.
+pub const MAGICBLOCK_DEVNET_VALIDATOR: Pubkey =
+    pubkey!("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57");
+
+/// The validator every delegation is pinned to.
+///
+/// Pinning is load-bearing, not cosmetic: all of a market's delegated accounts
+/// (book, router, slabs, oracle, portfolios, receipts) must land on the **same**
+/// validator, because a fill mutates several of them in one rollup transaction.
+/// An account delegated with `validator: None` can be claimed by a different
+/// validator, and state stranded there is unreachable from where the rest of
+/// the market lives.
+///
+/// The `local-er` feature returns `None` so a locally run ephemeral validator
+/// (whose identity differs per machine) can claim the accounts during tests.
+pub fn delegation_validator() -> Option<Pubkey> {
+    if cfg!(feature = "local-er") {
+        None
+    } else {
+        Some(MAGICBLOCK_DEVNET_VALIDATOR)
+    }
+}
+
+/// The one `DelegateConfig` used everywhere.
+///
+/// `commit_frequency_ms: u32::MAX` means the validator never auto-commits;
+/// every commit is explicit and program-driven, so the set of base-layer
+/// snapshots is exactly the set the program asked for.
+pub fn delegate_config() -> DelegateConfig {
+    DelegateConfig {
+        commit_frequency_ms: u32::MAX,
+        validator: delegation_validator(),
+    }
+}
+
+/// The `#[action]` attribute appends two accounts (`escrow_auth`, `escrow`) to
+/// a settle instruction's account struct. The validator injects both at
+/// dispatch time, so when a rollup leg builds the account list for a settle
+/// action it must truncate them off the generated metas.
+pub const ACTION_INJECTED_TRAILING_ACCOUNTS: usize = 2;
+
+/// Compute budget requested for a validator-dispatched settle action.
+pub const SETTLE_ACTION_COMPUTE_UNITS: u32 = 200_000;

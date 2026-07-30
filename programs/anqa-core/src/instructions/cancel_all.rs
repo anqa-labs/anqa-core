@@ -1,19 +1,10 @@
-//! Bulk cancellation.
+//! Pull every resting order this trader has, on both sides. The panic button.
 //!
 //! A market maker quoting a ladder cannot pull it one order at a time — by the
-//! time the fifth transaction lands the mark has moved again. These are the two
-//! instructions that decide whether anyone will quote your book:
-//!
-//! - `cancel_all_orders` — pull everything, both sides. The panic button.
-//! - `cancel_up_to` — pull only quotes *more aggressive* than a price, keeping
-//!   the passive rest of the ladder alive. This is the everyday risk tool: the
-//!   mark moves against you, so you retreat the near side and leave the far side
-//!   working.
-//!
-//! "More aggressive" means closer to crossing — a higher bid, a lower ask.
-//!
-//! Both release the initial margin those orders had reserved, which is Anqa-side
-//! bookkeeping the risk kernel never sees.
+//! time the fifth transaction lands the mark has moved again. This and
+//! `cancel_up_to` are the two instructions that decide whether anyone will
+//! quote your book. Both release the initial margin those orders had reserved,
+//! which is Anqa-side bookkeeping the risk kernel never sees.
 
 use anchor_lang::prelude::*;
 
@@ -51,7 +42,7 @@ pub struct CancelBulk<'info> {
 }
 
 /// Release the margin held by `price_x_lots` worth of cancelled orders.
-fn release_margin(
+pub(crate) fn release_margin(
     market: &Market,
     portfolio: &AccountLoader<Portfolio>,
     price_x_lots: u128,
@@ -74,7 +65,7 @@ fn release_margin(
 ///
 /// Deliberately allowed while the market is paused: a pause must never trap a
 /// trader's orders or the margin they hold.
-pub fn cancel_all(ctx: Context<CancelBulk>) -> Result<()> {
+pub fn handler(ctx: Context<CancelBulk>) -> Result<()> {
     let trader = ctx.accounts.trader.key();
     let (count, price_x_lots) = {
         let mut book = ctx.accounts.book.load_mut()?;
@@ -90,29 +81,5 @@ pub fn cancel_all(ctx: Context<CancelBulk>) -> Result<()> {
         count,
     });
     msg!("anqa: cancelled {} order(s)", count);
-    Ok(())
-}
-
-/// Pull this trader's orders on `side` that are at or more aggressive than
-/// `price_in_ticks`, leaving the passive remainder working.
-pub fn cancel_up_to(ctx: Context<CancelBulk>, side: Side, price_in_ticks: u64) -> Result<()> {
-    let trader = ctx.accounts.trader.key();
-    let (count, price_x_lots) = {
-        let mut book = ctx.accounts.book.load_mut()?;
-        book.side_mut(side)
-            .cancel_matching(&trader, side, Some(price_in_ticks))
-    };
-
-    release_margin(&ctx.accounts.market, &ctx.accounts.portfolio, price_x_lots)?;
-
-    emit!(OrdersCancelled {
-        market_id: ctx.accounts.market.market_id,
-        count,
-    });
-    msg!(
-        "anqa: cancelled {} order(s) at or beyond {}",
-        count,
-        price_in_ticks
-    );
     Ok(())
 }

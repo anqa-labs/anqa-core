@@ -36,6 +36,7 @@ import os from "os";
 import path from "path";
 
 const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
 const BTC_FEED_HEX = "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43";
 const BTC_FEED = new PublicKey("4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo");
@@ -108,6 +109,13 @@ async function main() {
   const internalOracle = pda("anqa_int_oracle");
   const ledgerOf = (k: PublicKey) => pda("anqa_ledger", [k.toBuffer()]);
   const receiptOf = (k: PublicKey) => pda("anqa_wreceipt", [k.toBuffer()]);
+  const depositReceiptOf = (k: PublicKey) => pda("anqa_dreceipt", [k.toBuffer()]);
+  // Delegation-program PDAs for an account that may be delegated.
+  const delegationOf = (a: PublicKey) => ({
+    buffer: PublicKey.findProgramAddressSync([S("buffer"), a.toBuffer()], PROGRAM_ID)[0],
+    delegationRecord: PublicKey.findProgramAddressSync([S("delegation"), a.toBuffer()], DLP)[0],
+    delegationMetadata: PublicKey.findProgramAddressSync([S("delegation-metadata"), a.toBuffer()], DLP)[0],
+  });
 
   // The crank now reads the relay, not Pyth — because inside a rollup Pyth's
   // accounts are not delegated to us and cannot be read at all. A keeper
@@ -192,18 +200,26 @@ async function main() {
     });
     await (isPayer ? li.rpc() : li.signers([kp]).rpc()); await sleep(PACE);
 
-    // Deposit is base-layer only: tokens + ledger. The basket is credited
-    // separately by claim_deposit, which can run inside a rollup.
-    const d = program.methods.deposit(new BN(COLLATERAL)).accounts({
+    // Deposit with queue_claim=false: base-layer only, tokens + ledger. The
+    // portfolio is credited by the keeper rail of claim_deposit below. The
+    // receipt rail (queue_claim=true, validator-driven) is exercised in
+    // app/er-e2e.ts where a live rollup can dispatch the queued claim.
+    const dRcpt = depositReceiptOf(kp.publicKey);
+    const dDel = delegationOf(dRcpt);
+    const d = program.methods.deposit(new BN(COLLATERAL), false).accounts({
       trader: kp.publicKey, market, ledger: ledgerOf(kp.publicKey),
-      traderTokenAccount: ata, vault, tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
+      traderTokenAccount: ata, vault,
+      receipt: dRcpt, buffer: dDel.buffer,
+      delegationRecord: dDel.delegationRecord, delegationMetadata: dDel.delegationMetadata,
+      ownerProgram: PROGRAM_ID, delegationProgram: DLP,
+      tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
     });
     await (isPayer ? d.rpc() : d.signers([kp]).rpc()); await sleep(PACE);
 
     await program.methods.claimDeposit().accounts({
       caller: payer.publicKey, market, riskGroup, assetSlots,
       portfolio: pf, ledger: ledgerOf(kp.publicKey),
+      receipt: null, magicContext: null, magicProgram: null,
     }).rpc(); await sleep(PACE);
     acct[name] = { kp, pf, ata };
   }
@@ -219,13 +235,17 @@ async function main() {
     .signers([maker])
     .rpc(); await sleep(PACE);
 
-  await program.methods
+  const crossSig = await program.methods
     .placeOrder({ bid: {} }, { limit: {} }, new BN(askPrice), new BN(LOTS), new BN(2))
     .accounts({ trader: payer.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
     .remainingAccounts([{ pubkey: acct.maker.pf, isSigner: false, isWritable: true }])
     .rpc(); await sleep(PACE);
 
   const bk: any = await rpc(() => program.account.book.fetch(book));
+  if (Number(bk.fillCount) !== 1) {
+    const tx = await connection.getTransaction(crossSig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }).catch(() => null);
+    for (const l of tx?.meta?.logMessages ?? [`  ....  no logs (sig ${crossSig})`]) console.log("   L1:", l);
+  }
   check(Number(bk.fillCount) === 1, "taker crossed the maker's ask", `${bk.lastFillBaseLots}@${bk.lastFillPriceInTicks} ticks`);
 
   const vaultAfterTrade = await rpc(() => connection.getTokenAccountBalance(vault));
@@ -236,33 +256,35 @@ async function main() {
   );
 
   // ── protect ──────────────────────────────────────────────────────────────
+  // Triggers live in the portfolio's slots now (they delegate with it and can
+  // fire inside the rollup), so assertions read the portfolio, not a PDA.
   console.log("\n[protect]");
   const trigId = new BN(7);
-  const trigger = PublicKey.findProgramAddressSync(
-    [S("anqa_trigger"), le8(MARKET_ID), payer.publicKey.toBuffer(), le8(trigId)],
-    PROGRAM_ID
-  )[0];
+  const activeTrigger = async () => {
+    const pf: any = await rpc(() => program.account.portfolio.fetch(acct.taker.pf));
+    return pf.triggers.find((t: any) => t.active === 1) ?? null;
+  };
   await program.methods
     .placeTriggerOrder(trigId, new BN(Math.floor(mark * 0.97)), { below: {} }, new BN(Math.floor(markTicks * 0.97)), new BN(0))
-    .accounts({ trader: payer.publicKey, market, trigger, systemProgram: SystemProgram.programId })
+    .accounts({ trader: payer.publicKey, market, portfolio: acct.taker.pf })
     .rpc(); await sleep(PACE);
-  const tr: any = await rpc(() => program.account.triggerOrder.fetch(trigger));
-  check(Number(tr.triggerPrice) === Math.floor(mark * 0.97), "stop-loss armed 3% below mark");
+  const armed = await activeTrigger();
+  check(
+    armed !== null && new BN(armed.triggerPrice, "le").eq(new BN(Math.floor(mark * 0.97))),
+    "stop-loss armed 3% below mark, inside the portfolio"
+  );
 
-  // Not armed yet — the mark has not fallen.
-  // skipPreflight means a failed tx returns no simulation logs, so assert on
-  // state: firing closes the trigger account, therefore it surviving proves the
-  // fire was refused.
+  // Not armed yet — the mark has not fallen. Firing disarms the slot, so the
+  // slot surviving proves the fire was refused.
   try {
     await program.methods
-      .fireTriggerOrder()
-      .accounts({ keeper: payer.publicKey, market, oracleState, trigger })
+      .fireTriggerOrder(trigId)
+      .accounts({ keeper: payer.publicKey, market, oracleState, portfolio: acct.taker.pf })
       .rpc(); await sleep(PACE);
   } catch (_) {
     /* expected */
   }
-  const trigStillThere = await rpc(() => connection.getAccountInfo(trigger));
-  check(trigStillThere !== null, "unarmed trigger refused", "mark has not reached it");
+  check((await activeTrigger()) !== null, "unarmed trigger refused", "mark has not reached it");
 
   // ── crank ────────────────────────────────────────────────────────────────
   console.log("\n[crank]");
@@ -310,34 +332,37 @@ async function main() {
   }
   const bk3: any = await rpc(() => program.account.book.fetch(book));
   check(Number(bk3.fillCount) === 2, "taker is flat", "a second close produced no fill");
+  check((await activeTrigger()) === null, "stop cleared with the position", "no orphaned protection");
 
   // ── settle ───────────────────────────────────────────────────────────────
+  // Forced exit: the non-custodial escape hatch pays out the entire certified
+  // balance with no rollup and no keeper in the path. (The boundary flow —
+  // request -> authorize -> settle across a live ER — is exercised by
+  // app/er-e2e.ts, where the receipt actually delegates into a rollup.)
   console.log("\n[settle]");
   await program.methods.cancelAllOrders()
     .accounts({ trader: payer.publicKey, market, book, portfolio: acct.taker.pf })
     .rpc(); await sleep(PACE);
   const before = await rpc(() => connection.getTokenAccountBalance(acct.taker.ata));
-  const receipt = receiptOf(payer.publicKey);
   await program.methods
-    .requestWithdraw(new BN(100_000 * 10 ** DEC))
-    .accounts({ trader: payer.publicKey, market, ledger: ledgerOf(payer.publicKey), receipt, systemProgram: SystemProgram.programId })
-    .rpc(); await sleep(PACE);
-  await program.methods
-    .authorizeWithdraw()
-    .accounts({ trader: payer.publicKey, market, riskGroup, assetSlots, portfolio: acct.taker.pf, receipt })
-    .rpc(); await sleep(PACE);
-  await program.methods
-    .settleWithdraw()
+    .forcedExit()
     .accounts({
-      caller: payer.publicKey, market, ledger: ledgerOf(payer.publicKey), receipt,
-      traderTokenAccount: acct.taker.ata, vault, tokenProgram: TOKEN_PROGRAM_ID,
+      caller: payer.publicKey, market, riskGroup, assetSlots,
+      portfolio: acct.taker.pf, book, ledger: ledgerOf(payer.publicKey),
+      payoutTo: acct.taker.ata, vault, tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc(); await sleep(PACE);
   const after = await rpc(() => connection.getTokenAccountBalance(acct.taker.ata));
   check(
     Number(after.value.amount) > Number(before.value.amount),
-    "withdrawal crossed the boundary: request -> authorize -> settle",
+    "forced exit paid out against committed state",
     `+${usdc(Number(after.value.amount) - Number(before.value.amount))} USDC`
+  );
+  const ledgerAfter: any = await rpc(() => program.account.userDepositLedger.fetch(ledgerOf(payer.publicKey)));
+  check(
+    Number(ledgerAfter.withdrawn) === Number(after.value.amount) - Number(before.value.amount),
+    "ledger recorded the exit",
+    `${usdc(ledgerAfter.withdrawn)} USDC withdrawn on record`
   );
 
   console.log(`\n════ ${passed} passed, ${failed} failed ════\n`);

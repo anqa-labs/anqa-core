@@ -123,7 +123,7 @@ pub fn handler(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<
     {
         let mut book = ctx.accounts.book.load_mut()?;
         for q in quotes.iter() {
-            let (fills, resting) = book.place(
+            let (fills, resting, rested) = book.place(
                 q.side,
                 OrderType::PostOnly,
                 q.price_in_ticks,
@@ -133,6 +133,10 @@ pub fn handler(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<
             )?;
             require!(fills.is_empty(), AnqaError::PostOnlyWouldCross);
             require!(resting == q.base_lots, AnqaError::PostOnlyWouldCross);
+            // No eviction on the bulk path — a ladder that needs to evict is
+            // quoting into a book with no room for it. Single orders may evict
+            // via `place_order`.
+            require!(rested, AnqaError::BookSideFull);
         }
     }
 

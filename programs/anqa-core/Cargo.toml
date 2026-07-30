@@ -18,12 +18,19 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
+# Unpin the delegation validator so a locally run ephemeral validator can claim
+# delegated accounts during tests. Never enable for devnet/mainnet builds.
+local-er = []
 
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 ephemeral-rollups-sdk = { version = "0.16.2", features = ["anchor-compat", "access-control"] }
+# Only for handing a queued instruction to the delegation program, whose API is
+# on the Solana 3.x type stack while Anchor is still on 2.x.
+solana-instruction = "3.5"
+solana-pubkey = "4.3"
 # Required by `#[zero_copy]`: the book is Pod-backed so it is never deserialized
 # onto the 4KB BPF stack. See state/book.rs.
 bytemuck = { version = "1.23", features = ["derive", "min_const_generics"] }

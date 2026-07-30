@@ -67,7 +67,6 @@ pub fn handler(
     market.taker_fee_bps = taker_fee_bps;
     market.maker_rebate_bps = maker_rebate_bps;
     market.paused = false;
-    market.seat_count = 0;
     market.asset_index = 0;
     market.oracle = oracle;
     market.oracle_kind = oracle_kind;

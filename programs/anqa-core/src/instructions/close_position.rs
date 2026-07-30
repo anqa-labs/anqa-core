@@ -111,7 +111,8 @@ pub fn handler<'info>(
     // IOC: fill what the book offers at this price or better, rest nothing.
     let (fills, _resting, fill_count_after) = {
         let mut book = ctx.accounts.book.load_mut()?;
-        let (fills, resting) = book.place(
+        // IOC rests nothing, so the `rested` flag is vacuous here.
+        let (fills, resting, _rested) = book.place(
             side,
             OrderType::ImmediateOrCancel,
             worst_price_in_ticks,
@@ -208,6 +209,25 @@ pub fn handler<'info>(
             fill_seq: seq,
             timestamp: now,
         });
+    }
+
+    // A dead position must take its triggers with it — an orphaned stop
+    // silently attaches to the next position this trader opens.
+    if ctx
+        .accounts
+        .portfolio
+        .load()?
+        .current_position(asset_index)
+        .is_none()
+    {
+        let cleared = ctx
+            .accounts
+            .portfolio
+            .load_mut()?
+            .clear_asset_triggers(asset_index as u8);
+        if cleared > 0 {
+            msg!("anqa: {} trigger(s) cleared with the position", cleared);
+        }
     }
 
     emit!(PositionClosed {

@@ -25,8 +25,10 @@ use crate::constants::{
 };
 use crate::errors::{map_risk, AnqaError};
 use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
-use crate::events::{Fill, OrderAccepted};
-use crate::state::{AssetSlots, Book, Market, OracleState, OrderType, Portfolio, RiskGroup, Side};
+use crate::events::{Fill, OrderAccepted, OrderCancelled};
+use crate::state::{
+    AssetSlots, Book, FillRecord, Market, OracleState, OrderType, Portfolio, RiskGroup, Side,
+};
 
 #[derive(Accounts)]
 pub struct PlaceOrder<'info> {
@@ -133,9 +135,9 @@ pub fn handler<'info>(
     }
 
     // --- 2. matching ---------------------------------------------------------
-    let (fills, resting, fill_count_after) = {
+    let (fills, resting, rested, fill_count_after) = {
         let mut book = ctx.accounts.book.load_mut()?;
-        let (fills, resting) = book.place(
+        let (fills, resting, rested) = book.place(
             side,
             order_type,
             price_in_ticks,
@@ -144,13 +146,23 @@ pub fn handler<'info>(
             client_order_id,
         )?;
         let n = book.fill_count;
-        (fills, resting, n)
+        (fills, resting, rested, n)
     };
 
     // --- 3. risk ------------------------------------------------------------
     // Each fill becomes a position pair. The kernel may still refuse — the
     // pre-check above is Anqa's, this is the kernel's, and only the kernel's
     // is authoritative.
+    //
+    // A refusal does NOT fail the taker. The refused maker's order is provably
+    // unbackable — the kernel would never let it become a position for anyone —
+    // so it is auto-cancelled, its margin released, and matching moves on.
+    // Failing instead would let one underwater account brick a price level:
+    // its order stays at the head of the queue and every taker who touches it
+    // reverts. The one exception is fill-or-kill, whose all-or-nothing promise
+    // a refused leg breaks — that still aborts everything.
+    let resting_side = side.opposite();
+    let mut credited: Vec<FillRecord> = Vec::with_capacity(fills.len());
     if !fills.is_empty() {
         let mut group = ctx.accounts.risk_group.load_mut()?;
         let n_assets = group.asset_count();
@@ -172,50 +184,91 @@ pub fn handler<'info>(
                 })
                 .ok_or(AnqaError::MakerPortfolioMissing)?;
 
-            // Resting orders were banded when placed, but the mark moves. Check
-            // again at execution so a stale resting order cannot be crossed at a
-            // price that is now far from reality.
-            let fill_price_quote = market
-                .ticks_to_quote(f.price_in_ticks)
-                .ok_or(AnqaError::MathOverflow)?;
-            require!(
-                band_ok(fill_price_quote, mark, market.oracle.max_band_bps),
-                AnqaError::PriceOutsideBand
-            );
-
             let maker_loader = AccountLoader::<Portfolio>::try_from(maker_ai)?;
             let mut maker = maker_loader.load_mut()?;
 
-            let exec_price = market
-                .quote_notional(f.price_in_ticks, 1)
+            // Resting orders were banded when placed, but the mark moves. A
+            // resting price now outside the band is stale by definition — the
+            // order is cancelled, not crossed.
+            let fill_price_quote = market
+                .ticks_to_quote(f.price_in_ticks)
                 .ok_or(AnqaError::MathOverflow)?;
-            let size_q = i128::from(f.base_lots)
-                .checked_mul(POS_SCALE as i128)
-                .ok_or(AnqaError::MathOverflow)?;
+            let mut accepted = band_ok(fill_price_quote, mark, market.oracle.max_band_bps);
 
-            let req = TradeRequestV16 {
-                asset_index,
-                size_q,
-                exec_price,
-                fee_bps: market.taker_fee_bps as u64,
-            };
+            if accepted {
+                let exec_price = market
+                    .quote_notional(f.price_in_ticks, 1)
+                    .ok_or(AnqaError::MathOverflow)?;
+                let size_q = i128::from(f.base_lots)
+                    .checked_mul(POS_SCALE as i128)
+                    .ok_or(AnqaError::MathOverflow)?;
 
-            // Orientation: the buyer takes the long leg.
-            let mut taker_view = PortfolioV16ViewMut::new(taker.account_mut());
-            let mut maker_view = PortfolioV16ViewMut::new(maker.account_mut());
-            let res = match side {
-                Side::Bid => view.execute_trade_with_fee_loss_stale_scoped_not_atomic(
-                    &mut taker_view,
-                    &mut maker_view,
-                    req,
-                ),
-                Side::Ask => view.execute_trade_with_fee_loss_stale_scoped_not_atomic(
-                    &mut maker_view,
-                    &mut taker_view,
-                    req,
-                ),
-            };
-            map_risk(res)?;
+                let req = TradeRequestV16 {
+                    asset_index,
+                    size_q,
+                    exec_price,
+                    fee_bps: market.taker_fee_bps as u64,
+                };
+
+                // Orientation: the buyer takes the long leg.
+                let mut taker_view = PortfolioV16ViewMut::new(taker.account_mut());
+                let mut maker_view = PortfolioV16ViewMut::new(maker.account_mut());
+                let res = match side {
+                    Side::Bid => view.execute_trade_with_fee_loss_stale_scoped_not_atomic(
+                        &mut taker_view,
+                        &mut maker_view,
+                        req,
+                    ),
+                    Side::Ask => view.execute_trade_with_fee_loss_stale_scoped_not_atomic(
+                        &mut maker_view,
+                        &mut taker_view,
+                        req,
+                    ),
+                };
+                if order_type == OrderType::FillOrKill {
+                    map_risk(res)?;
+                }
+                if let Err(e) = &res {
+                    // The refusal is folded into an auto-cancel below; the tape
+                    // must still say why, or refusals become undiagnosable.
+                    msg!("anqa: kernel refused fill: {:?}", e);
+                }
+                accepted = res.is_ok();
+            } else {
+                require!(
+                    order_type != OrderType::FillOrKill,
+                    AnqaError::FillOrKillUnfilled
+                );
+            }
+
+            if !accepted {
+                // Auto-cancel: remove whatever part of the order still rests,
+                // release the margin the whole order held, tell the owner.
+                let mut cancelled_lots = f.base_lots;
+                if !f.maker_order_closed {
+                    let mut book = ctx.accounts.book.load_mut()?;
+                    let (_, remainder) = book
+                        .side_mut(resting_side)
+                        .cancel(&f.maker, f.maker_client_order_id)?;
+                    cancelled_lots = cancelled_lots.saturating_add(remainder);
+                }
+                let cancelled_notional = market
+                    .quote_notional(f.price_in_ticks, cancelled_lots)
+                    .ok_or(AnqaError::MathOverflow)? as u128;
+                let freed = cancelled_notional
+                    .checked_mul(INITIAL_MARGIN_BPS as u128)
+                    .ok_or(AnqaError::MathOverflow)?
+                    / 10_000u128;
+                maker.release(freed);
+                emit!(OrderCancelled {
+                    market_id,
+                    client_order_id: f.maker_client_order_id,
+                });
+                // The taker's lots that "matched" here go unexecuted — same
+                // outcome as if the maker had cancelled a moment earlier. A
+                // taker is never owed the depth it saw.
+                continue;
+            }
 
             // The maker's resting order became a position: the margin it had
             // reserved is now accounted for by the kernel, so release ours.
@@ -227,7 +280,63 @@ pub fn handler<'info>(
                 .ok_or(AnqaError::MathOverflow)?
                 / 10_000u128;
             maker.release(freed);
+            credited.push(*f);
         }
+    }
+
+    // --- 3.5 eviction: a full side yields its worst order to a better one ----
+    // Without this a full book freezes in whatever shape it filled up in: the
+    // 33rd order is refused even at a better price, while a never-to-trade
+    // order keeps its slot. Eviction keeps the book holding the N most
+    // aggressive orders anyone wants to place. Only a strictly better price
+    // earns a slot — an equal price arrived later and loses on time.
+    if resting > 0 && !rested {
+        {
+            let book = ctx.accounts.book.load()?;
+            require!(
+                book.outranks_worst(side, price_in_ticks),
+                AnqaError::BookSideFull
+            );
+        }
+        let evicted = {
+            let mut book = ctx.accounts.book.load_mut()?;
+            let evicted = book
+                .side_mut(side)
+                .evict_worst()
+                .ok_or(AnqaError::BookSideFull)?;
+            book.rest(side, trader_key, client_order_id, price_in_ticks, resting)?;
+            evicted
+        };
+
+        // Give the evicted order's margin back to its owner, whose portfolio
+        // the client supplies (or it is the taker's own).
+        let evicted_notional = market
+            .quote_notional(evicted.price_in_ticks, evicted.base_lots)
+            .ok_or(AnqaError::MathOverflow)? as u128;
+        let freed = evicted_notional
+            .checked_mul(INITIAL_MARGIN_BPS as u128)
+            .ok_or(AnqaError::MathOverflow)?
+            / 10_000u128;
+        if evicted.trader == trader_key {
+            ctx.accounts.portfolio.load_mut()?.release(freed);
+        } else {
+            let owner_ai = ctx
+                .remaining_accounts
+                .iter()
+                .find(|ai| {
+                    AccountLoader::<Portfolio>::try_from(ai)
+                        .and_then(|l| l.load().map(|p| p.owner == evicted.trader))
+                        .unwrap_or(false)
+                })
+                .ok_or(AnqaError::EvictedPortfolioMissing)?;
+            AccountLoader::<Portfolio>::try_from(owner_ai)?
+                .load_mut()?
+                .release(freed);
+        }
+        emit!(OrderCancelled {
+            market_id,
+            client_order_id: evicted.client_order_id,
+        });
     }
 
     // --- 4. reserve margin for whatever rests --------------------------------
@@ -243,9 +352,20 @@ pub fn handler<'info>(
     }
 
     // --- 5. the public tape --------------------------------------------------
+    // Auto-cancelled fills never consummated, so they are not fills: back the
+    // book's counter off and number the tape by what actually traded.
+    let failed = (fills.len() - credited.len()) as u64;
+    if failed > 0 {
+        let mut book = ctx.accounts.book.load_mut()?;
+        book.fill_count = book.fill_count.saturating_sub(failed);
+        if let Some(last) = credited.last() {
+            book.last_fill_price_in_ticks = last.price_in_ticks;
+            book.last_fill_base_lots = last.base_lots;
+        }
+    }
     let now = Clock::get()?.unix_timestamp;
-    let mut fill_seq = fill_count_after - fills.len() as u64;
-    for f in fills.iter() {
+    let mut fill_seq = (fill_count_after - failed) - credited.len() as u64;
+    for f in credited.iter() {
         fill_seq += 1;
         emit!(Fill {
             market_id,
@@ -263,7 +383,7 @@ pub fn handler<'info>(
 
     msg!(
         "anqa: {} fill(s), {} lots resting",
-        fills.len(),
+        credited.len(),
         resting
     );
     Ok(())

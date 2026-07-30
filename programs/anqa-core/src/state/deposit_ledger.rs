@@ -4,7 +4,7 @@
 //! ## Why these exist
 //!
 //! A rollup can only write accounts delegated to it. Collateral lives in a
-//! base-layer vault and must stay there; the trading account (the basket) is
+//! base-layer vault and must stay there; the trading account (the portfolio) is
 //! delegated. So value moving in either direction crosses a boundary that no
 //! single transaction can span.
 //!
@@ -13,9 +13,9 @@
 //! written on base and *read* from the rollup, and anything the rollup decides
 //! has to travel back as committed state plus a receipt.
 //!
-//! ## Deposits: monotonic ledger, high-water mark in the basket
+//! ## Deposits: monotonic ledger, high-water mark in the portfolio
 //!
-//! `deposited` only ever grows. The basket remembers how much of it has already
+//! `deposited` only ever grows. The portfolio remembers how much of it has already
 //! been absorbed. Claiming credits the difference, so replaying a claim is a
 //! no-op and no cross-boundary write is ever needed. Idempotent by construction
 //! rather than by locking.
@@ -88,17 +88,45 @@ impl UserDepositLedger {
     }
 }
 
+/// A deposit crossing into the rollup. Created **and delegated** on base by
+/// `deposit`, carrying the queued `claim_deposit` the validator runs inside
+/// the rollup; consumed on base by `close_deposit_receipt` once the credit
+/// has landed.
+///
+/// The receipt is the *vehicle*, not the accounting: the credit itself is
+/// still computed from the monotonic ledger against the portfolio's
+/// high-water mark, so a lost or replayed receipt can never mint or lose a
+/// deposit — at worst it costs the rent until someone closes it.
+#[account]
+#[derive(InitSpace, Debug)]
+pub struct DepositReceipt {
+    pub owner: Pubkey,
+    pub market_id: u64,
+    /// What this deposit paid in, for the tape; the credit is ledger-derived.
+    pub amount: u64,
+    /// Set by the rollup once the portfolio was credited.
+    pub credited: u8,
+    pub created_at: i64,
+    pub bump: u8,
+}
+
 /// Stages a withdrawal as it crosses the boundary.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
 pub enum WithdrawStage {
     /// Reserved on base layer. The rollup has not yet judged it.
     Requested,
-    /// The rollup debited the basket and wrote the true amount here.
+    /// The rollup debited the portfolio and wrote the true amount here.
     Authorized,
 }
 
-/// The receipt itself. Created on base, authorized inside the rollup, consumed
-/// on base — the only way a rollup decision can reach the vault.
+/// The receipt itself. Created **and delegated** on base, authorized inside
+/// the rollup, committed-and-undelegated back, consumed on base — the only way
+/// a rollup decision can reach the vault.
+///
+/// Delegation is what makes the lifecycle race-free: while the request is in
+/// flight the receipt is owned by the delegation program, so the base-layer
+/// settle physically cannot run early. Only after the rollup hands it back —
+/// with or without an authorization — does settling become possible.
 #[account]
 #[derive(InitSpace, Debug)]
 pub struct WithdrawReceipt {
@@ -106,8 +134,13 @@ pub struct WithdrawReceipt {
     pub market_id: u64,
     /// What the trader asked for and the ledger reserved.
     pub requested: u64,
-    /// What the risk kernel actually permitted. Meaningless until `Authorized`.
+    /// What the risk kernel actually permitted. Meaningless until `Authorized`,
+    /// and zero if the kernel refused — a refusal still comes home as a
+    /// receipt, so the reservation can be released.
     pub authorized: u64,
+    /// Where the payout goes. Captured at request time, when the trader signed,
+    /// so the permissionless settle cannot be pointed anywhere else.
+    pub payout_to: Pubkey,
     pub stage: WithdrawStage,
     pub created_at: i64,
     pub bump: u8,

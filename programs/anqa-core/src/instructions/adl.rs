@@ -91,6 +91,12 @@ pub fn handler(ctx: Context<Adl>, asset_index: u32, reduce_base_lots: u64) -> Re
 
     let reduced_lots = u64::try_from(outcome.reduced_q / POS_SCALE).unwrap_or(0);
 
+    // If deleveraging closed the position entirely, its triggers go too — an
+    // orphaned stop attaches to the trader's next position.
+    if pf.current_position(asset_index).is_none() {
+        pf.clear_asset_triggers(asset_index as u8);
+    }
+
     emit!(AutoDeleveraged {
         market_id,
         asset_index,

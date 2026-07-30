@@ -293,6 +293,8 @@ dependencies = [
  "ephemeral-rollups-sdk",
  "percolator",
  "pyth-solana-receiver-sdk",
+ "solana-instruction 3.5.0",
+ "solana-pubkey 4.3.0",
 ]
 
 [[package]]

@@ -1,21 +1,27 @@
-//! Advance the risk engine: mark price and funding.
+//! Re-anchor an asset's accrual clock — run once inside the rollup, right
+//! after delegation, before the first trade.
 //!
-//! Cadence is a solvency parameter, not an ops detail. The kernel refuses any
-//! configuration where maintenance margin cannot cover the worst case between
-//! accruals, which is why Anqa's 20x launch cap pins the mark to at most 1%
-//! movement per crank. Miss cranks during a fast move and the shortfall becomes
-//! bad debt against the vault rather than the trader's collateral.
+//! ## Why this exists
 //!
-//! The mark price comes from the **internal oracle relay**, never from the
-//! caller. A cranker that could name its own price could mark every position
-//! wherever it liked and liquidate at will; the signer here is untrusted and
-//! permissionless by design.
+//! The risk group is initialized on base layer, so its accrual clock
+//! (`slot_last`) is anchored to **base-chain slots**. The rollup runs its own,
+//! much faster slot stream — on devnet it reads ~28 million slots ahead. The
+//! kernel accrues bounded segments per crank (that bound *is* the leverage
+//! cadence guarantee), so it can never walk across a 28M-slot gap: every crank
+//! leaves `slot_last < now`, `loss_stale_active` stays armed, and every fill
+//! is refused with `LockActive`. Found live on devnet.
 //!
-//! It reads the relay rather than Pyth directly because this instruction must
-//! run **inside the rollup**, where Pyth's accounts are not delegated to us and
-//! cannot be read at all. `sync_internal_oracle` refreshes the relay on base
-//! layer, where Pyth's signature is still verifiable; this side re-checks feed
-//! identity, staleness and confidence before marking anyone against it.
+//! ## Why it is safe to expose permissionlessly
+//!
+//! The kernel refuses the re-anchor unless the market is *empty* — no
+//! positions, no loss state anywhere in the group (its
+//! `group_has_position_or_loss_state_for_oracle_reset` gate). An empty market
+//! has no funding to skip and no losses to hide, so jumping its clock forfeits
+//! nothing. The price comes from the validated relay, never the caller. Once
+//! trading begins the gate closes and the clock advances only by cranks.
+//!
+//! One per asset, in the same session-start sequence:
+//! `sync relay (ER) → reanchor (ER) → crank (ER) → trade`.
 
 use anchor_lang::prelude::*;
 use percolator::MarketGroupV16ViewMut;
@@ -29,9 +35,8 @@ use crate::state::{
 };
 
 #[derive(Accounts)]
-pub struct Crank<'info> {
-    /// Permissionless — anyone may advance the market. They supply no prices,
-    /// only the transaction.
+pub struct ReanchorOracle<'info> {
+    /// Permissionless — the kernel's empty-market gate is the authority.
     pub cranker: Signer<'info>,
 
     #[account(
@@ -49,13 +54,12 @@ pub struct Crank<'info> {
     #[account(mut, seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub oracle_state: Account<'info, OracleState>,
 
-    /// The relayed price. Delegated into the rollup alongside the book, which is
-    /// the only way this instruction can read a price there at all.
+    /// The relayed price — same trust path as the crank.
     #[account(seeds = [INTERNAL_ORACLE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub internal_oracle: Account<'info, InternalOracle>,
 }
 
-pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> Result<()> {
+pub fn handler(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
     require!(
         (asset_index as usize) < crate::constants::MAX_ASSETS,
         AnqaError::BadAssetIndex
@@ -68,16 +72,13 @@ pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> 
         market.oracle.max_age_secs,
         market.oracle.max_conf_bps,
     )?;
-    let secondary = None;
-
     let mark_price = accept_mark(
         &mut ctx.accounts.oracle_state,
         &market.oracle,
         primary,
-        secondary,
+        None,
         market.quote_decimals,
     )?;
-    let ema = ctx.accounts.oracle_state.ema_price;
 
     let slot = Clock::get()?.slot;
     let mut group = ctx.accounts.risk_group.load_mut()?;
@@ -86,19 +87,17 @@ pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> 
     let mut view =
         MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
 
-    map_risk(view.accrue_asset_to_not_atomic(
+    map_risk(view.reset_empty_asset_oracle_anchor_not_atomic(
         asset_index as usize,
-        slot,
         mark_price,
-        funding_rate_e9,
-        true,
+        slot,
     ))?;
 
     msg!(
-        "anqa: crank -> mark {} (ema {}) funding {}",
-        mark_price,
-        ema,
-        funding_rate_e9
+        "anqa: asset {} re-anchored to slot {} at mark {}",
+        asset_index,
+        slot,
+        mark_price
     );
     Ok(())
 }

@@ -30,6 +30,12 @@ pub enum AnqaError {
     InsufficientMargin,
     #[msg("maker portfolio account missing or mismatched")]
     MakerPortfolioMissing,
+    #[msg("book side full: pass the evicted owner's portfolio to place here")]
+    EvictedPortfolioMissing,
+    #[msg("all trigger slots are in use; cancel one first")]
+    TriggerSlotsFull,
+    #[msg("a trigger with this id is already armed")]
+    DuplicateTriggerId,
     #[msg("asset index out of range")]
     BadAssetIndex,
     #[msg("cancel resting orders before withdrawing")]

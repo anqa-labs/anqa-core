@@ -2,6 +2,17 @@
 
 use anchor_lang::prelude::*;
 
+/// Market configuration.
+///
+/// **Never delegated.** `place_order` reads this for tick size, fees, oracle
+/// policy and the paused flag; inside the rollup it arrives as a read-only
+/// clone of the base account (verified live on devnet). Keeping it on base is
+/// load-bearing: delegation would flip its owner to the delegation program and
+/// break every base instruction that reads `market` through Anchor's owner
+/// check — `deposit`, the withdraw legs, `forced_exit`.
+///
+/// Consequence: admin writes (pause, oracle params) always happen on base, and
+/// the rollup sees them on its next clone refresh.
 #[account]
 #[derive(InitSpace)]
 pub struct Market {
@@ -25,8 +36,6 @@ pub struct Market {
     pub maker_rebate_bps: u16,
     /// Halts new orders while set; cancels remain allowed.
     pub paused: bool,
-    /// Number of seats claimed on this market.
-    pub seat_count: u64,
     /// Index of this market's asset inside the risk group's slot array.
     pub asset_index: u32,
     /// Oracle policy. Fixed at creation; changeable only through a timelocked

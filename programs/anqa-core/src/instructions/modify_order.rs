@@ -99,7 +99,7 @@ pub fn handler(
             // New claim on the book: cancel and re-post, taking a fresh sequence
             // number and therefore the back of its price level.
             book.side_mut(side).cancel(&trader, client_order_id)?;
-            let (fills, resting) = book.place(
+            let (fills, resting, rested) = book.place(
                 side,
                 OrderType::PostOnly,
                 new_price_in_ticks,
@@ -107,9 +107,12 @@ pub fn handler(
                 trader,
                 client_order_id,
             )?;
-            // Post-only: an amendment that would cross is a mispricing.
+            // Post-only: an amendment that would cross is a mispricing. The
+            // cancel above freed a slot on this side, so the re-post always
+            // has room — `rested` is checked defensively.
             require!(fills.is_empty(), AnqaError::PostOnlyWouldCross);
             require!(resting == new_base_lots, AnqaError::PostOnlyWouldCross);
+            require!(rested, AnqaError::BookSideFull);
             false
         }
     };

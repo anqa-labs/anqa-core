@@ -27,31 +27,9 @@ pub enum TriggerDirection {
     Below,
 }
 
-#[account]
-#[derive(InitSpace, Debug)]
-pub struct TriggerOrder {
-    pub market_id: u64,
-    pub owner: Pubkey,
-    /// Caller-supplied id; also the PDA seed, so a trader can hold many.
-    pub trigger_id: u64,
-    /// Mark price, in quote atoms, at which this arms.
-    pub trigger_price: u64,
-    pub direction: TriggerDirection,
-    /// Worst acceptable execution price, in ticks — the slippage bound applied
-    /// when the trigger converts into a live order.
-    pub limit_price_in_ticks: u64,
-    /// Zero means "whatever the position is when it fires".
-    pub max_base_lots: u64,
-    pub created_at: i64,
-    pub bump: u8,
-}
-
-impl TriggerOrder {
-    /// Has the mark crossed this trigger?
-    pub fn is_armed(&self, mark: u64) -> bool {
-        match self.direction {
-            TriggerDirection::Above => mark >= self.trigger_price,
-            TriggerDirection::Below => mark <= self.trigger_price,
-        }
-    }
-}
+// The trigger data itself lives in `Portfolio.triggers` (see `state/risk.rs`,
+// `TriggerSlot`) — inside the delegated portfolio, so triggers travel with it
+// and fire inside the rollup. Standalone trigger accounts became unfireable
+// the moment trading moved into the rollup: firing needs the trigger, the
+// oracle state, the portfolio and the book in one transaction, and those
+// lived on opposite sides of the delegation boundary.

@@ -57,20 +57,38 @@ pub fn handler(ctx: Context<Liquidate>, asset_index: u32) -> Result<()> {
     );
 
     let market_id = ctx.accounts.market.market_id;
-    let mut group = ctx.accounts.risk_group.load_mut()?;
-    let n_assets = group.asset_count();
-    let mut slots = ctx.accounts.asset_slots.load_mut()?;
-    let mut portfolio = ctx.accounts.portfolio.load_mut()?;
+    let outcome = {
+        let mut group = ctx.accounts.risk_group.load_mut()?;
+        let n_assets = group.asset_count();
+        let mut slots = ctx.accounts.asset_slots.load_mut()?;
+        let mut portfolio = ctx.accounts.portfolio.load_mut()?;
 
-    let mut view = MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
-    let mut pv = PortfolioV16ViewMut::new(portfolio.account_mut());
+        let mut view =
+            MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+        let mut pv = PortfolioV16ViewMut::new(portfolio.account_mut());
 
-    let outcome = map_risk(view.liquidate_account_not_atomic(
-        &mut pv,
-        LiquidationRequestV16 {
-            asset_index: asset_index as usize,
-        },
-    ))?;
+        map_risk(view.liquidate_account_not_atomic(
+            &mut pv,
+            LiquidationRequestV16 {
+                asset_index: asset_index as usize,
+            },
+        ))?
+    };
+
+    // If the liquidation closed the position entirely, its triggers go too —
+    // an orphaned stop attaches to the trader's next position.
+    if ctx
+        .accounts
+        .portfolio
+        .load()?
+        .current_position(asset_index)
+        .is_none()
+    {
+        ctx.accounts
+            .portfolio
+            .load_mut()?
+            .clear_asset_triggers(asset_index as u8);
+    }
 
     emit!(Liquidation {
         market_id,

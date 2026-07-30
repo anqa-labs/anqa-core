@@ -1,4 +1,4 @@
-//! The insurance fund — layer two of the loss waterfall.
+//! Fund the insurance pot — layer two of the loss waterfall.
 //!
 //! When a trader goes bankrupt, losses are absorbed in a strict order and each
 //! layer only fires when the one before it runs out:
@@ -22,29 +22,12 @@
 //! backing for BTC shorts or for ETH. That containment is the same reasoning as
 //! isolated source domains elsewhere in the kernel: a single market's bad day
 //! must not become everyone's.
-//!
-//! ## Why a separate token account
-//!
-//! The kernel counts insurance inside `header.vault` — it is one accounting
-//! total. We still keep the tokens in their own account, for two reasons:
-//!
-//! - **Verifiability.** "The fund holds $X" should be answerable with one RPC
-//!   call against a real account, not by trusting our arithmetic.
-//! - **Blast radius.** The withdraw path signs for the custody vault. If
-//!   insurance lived in that same token account, a bug there could pay out
-//!   insurance as trader collateral. Separate accounts make that impossible
-//!   regardless of accounting bugs.
-//!
-//! The invariant to check on-chain is therefore:
-//! `custody_vault.amount + insurance_vault.amount == header.vault`.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use percolator::MarketGroupV16ViewMut;
 
-use crate::constants::{
-    ASSET_SLOTS_SEED, INSURANCE_VAULT_SEED, MARKET_SEED, RISK_GROUP_SEED,
-};
+use crate::constants::{ASSET_SLOTS_SEED, INSURANCE_VAULT_SEED, MARKET_SEED, RISK_GROUP_SEED};
 use crate::errors::{map_risk, AnqaError};
 use crate::state::{AssetSlots, Market, RiskGroup};
 
@@ -54,46 +37,6 @@ pub struct InsuranceFunded {
     pub asset_index: u32,
     pub long_amount: u64,
     pub short_amount: u64,
-}
-
-#[derive(Accounts)]
-#[instruction(market_id: u64)]
-pub struct InitializeInsuranceVault<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-
-    #[account(
-        seeds = [MARKET_SEED, &market_id.to_le_bytes()],
-        bump = market.bump,
-        has_one = authority @ AnqaError::Unauthorized
-    )]
-    pub market: Account<'info, Market>,
-
-    pub collateral_mint: Account<'info, Mint>,
-
-    /// Its own authority, like the custody vault — no key can move it.
-    #[account(
-        init,
-        payer = authority,
-        seeds = [INSURANCE_VAULT_SEED, &market_id.to_le_bytes()],
-        bump,
-        token::mint = collateral_mint,
-        token::authority = insurance_vault,
-    )]
-    pub insurance_vault: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
-    pub rent: Sysvar<'info, Rent>,
-}
-
-pub fn initialize_vault(ctx: Context<InitializeInsuranceVault>, market_id: u64) -> Result<()> {
-    msg!(
-        "anqa: insurance vault ready for market {} ({})",
-        market_id,
-        ctx.accounts.insurance_vault.key()
-    );
-    Ok(())
 }
 
 #[derive(Accounts)]
@@ -132,7 +75,7 @@ pub struct FundInsurance<'info> {
 /// Both sides are funded in one call because they fail independently: a market
 /// that gaps down bankrupts longs, one that gaps up bankrupts shorts, and a
 /// backstop that only covers one direction is half a backstop.
-pub fn fund(
+pub fn handler(
     ctx: Context<FundInsurance>,
     asset_index: u32,
     long_amount: u64,

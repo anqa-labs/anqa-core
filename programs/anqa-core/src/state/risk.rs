@@ -27,6 +27,9 @@
 use anchor_lang::prelude::*;
 use percolator::{Market as PercMarket, MarketGroupV16HeaderAccount, PortfolioAccountV16Account};
 
+use super::trigger::TriggerDirection;
+use crate::constants::MAX_TRIGGERS_PER_PORTFOLIO;
+
 use crate::constants::MAX_ASSETS;
 
 /// Wrapper stored alongside each asset's engine state: the asset id, little-endian.
@@ -102,15 +105,84 @@ pub struct Portfolio {
     /// when the fill is refused and the book has already been walked. Anqa
     /// therefore reserves margin at placement and releases it on cancel or fill.
     pub reserved_margin: [u8; 16],
-    /// How much of the base-layer ledger's `deposited` this basket has already
+    /// How much of the base-layer ledger's `deposited` this portfolio has already
     /// absorbed, little-endian u64.
     ///
-    /// The ledger only grows and the basket remembers where it got to, so
+    /// The ledger only grows and the portfolio remembers where it got to, so
     /// claiming credits exactly the difference. Replay is a no-op, and the
     /// rollup never has to write anything on base layer to record that it
     /// claimed — which it could not do anyway.
     pub claimed_high_water: [u8; 8],
     pub inner: [u8; PORTFOLIO_BYTES],
+    /// Trigger orders (stop-loss / take-profit) ride **inside** the portfolio
+    /// so they delegate with it and fire inside the rollup, next to the book
+    /// they close into. As standalone base-layer accounts they became
+    /// unfireable the moment trading moved into the rollup: firing needs the
+    /// trigger, the oracle state, the portfolio and the book in one
+    /// transaction, and those lived on opposite sides of the boundary.
+    pub triggers: [TriggerSlot; MAX_TRIGGERS_PER_PORTFOLIO],
+}
+
+/// A trigger order slot. Everything little-endian bytes so the containing
+/// account stays `Pod` with no implicit padding.
+///
+/// Addressed by `trigger_id`, **never by slot index** — indices are storage,
+/// ids are identity. (An index-addressed API plus slot reuse is a live
+/// time-of-check races surface for permissionless keepers.)
+#[zero_copy]
+#[derive(Debug)]
+pub struct TriggerSlot {
+    /// Caller-supplied identity, unique among this portfolio's active slots.
+    pub trigger_id: [u8; 8],
+    /// Mark price, quote atoms, at which this arms.
+    pub trigger_price: [u8; 8],
+    /// Worst acceptable execution price, in ticks — the slippage bound applied
+    /// when the trigger converts into a live close.
+    pub limit_price_in_ticks: [u8; 8],
+    /// Zero means "whatever the position is when it fires".
+    pub max_base_lots: [u8; 8],
+    /// Slot at which this was armed. A trigger cannot fire in the slot it was
+    /// armed in — blocks atomic arm-then-fire extraction.
+    pub armed_at_slot: [u8; 8],
+    /// Which asset in the group this protects.
+    pub asset_index: u8,
+    /// 0 = fire when mark rises to/above; 1 = fire when mark falls to/below.
+    /// Matches `TriggerDirection`'s variant order.
+    pub direction: u8,
+    pub active: u8,
+    pub _pad: [u8; 5],
+}
+
+impl TriggerSlot {
+    pub fn id(&self) -> u64 {
+        u64::from_le_bytes(self.trigger_id)
+    }
+    pub fn price(&self) -> u64 {
+        u64::from_le_bytes(self.trigger_price)
+    }
+    pub fn limit_ticks(&self) -> u64 {
+        u64::from_le_bytes(self.limit_price_in_ticks)
+    }
+    pub fn max_lots(&self) -> u64 {
+        u64::from_le_bytes(self.max_base_lots)
+    }
+    pub fn armed_at(&self) -> u64 {
+        u64::from_le_bytes(self.armed_at_slot)
+    }
+    pub fn direction(&self) -> TriggerDirection {
+        if self.direction == 0 {
+            TriggerDirection::Above
+        } else {
+            TriggerDirection::Below
+        }
+    }
+    /// Has the mark crossed this trigger?
+    pub fn is_armed(&self, mark: u64) -> bool {
+        match self.direction() {
+            TriggerDirection::Above => mark >= self.price(),
+            TriggerDirection::Below => mark <= self.price(),
+        }
+    }
 }
 
 impl Portfolio {
@@ -183,5 +255,73 @@ impl Portfolio {
         }
         let committed = position_margin.saturating_add(self.reserved());
         Ok((equity as u128).saturating_sub(committed))
+    }
+
+    // ───────────────────────── trigger slots ─────────────────────────
+
+    /// The active slot holding `trigger_id`, if any.
+    pub fn find_trigger(&self, trigger_id: u64) -> Option<usize> {
+        self.triggers
+            .iter()
+            .position(|t| t.active == 1 && t.id() == trigger_id)
+    }
+
+    /// Arm a trigger in a free slot. Ids must be unique among active slots —
+    /// identity is the id, never the slot index.
+    #[allow(clippy::too_many_arguments)]
+    pub fn arm_trigger(
+        &mut self,
+        trigger_id: u64,
+        asset_index: u8,
+        direction: TriggerDirection,
+        trigger_price: u64,
+        limit_price_in_ticks: u64,
+        max_base_lots: u64,
+        now_slot: u64,
+    ) -> Result<()> {
+        require!(
+            self.find_trigger(trigger_id).is_none(),
+            crate::errors::AnqaError::DuplicateTriggerId
+        );
+        let slot = self
+            .triggers
+            .iter()
+            .position(|t| t.active == 0)
+            .ok_or(crate::errors::AnqaError::TriggerSlotsFull)?;
+        self.triggers[slot] = TriggerSlot {
+            trigger_id: trigger_id.to_le_bytes(),
+            trigger_price: trigger_price.to_le_bytes(),
+            limit_price_in_ticks: limit_price_in_ticks.to_le_bytes(),
+            max_base_lots: max_base_lots.to_le_bytes(),
+            armed_at_slot: now_slot.to_le_bytes(),
+            asset_index,
+            direction: match direction {
+                TriggerDirection::Above => 0,
+                TriggerDirection::Below => 1,
+            },
+            active: 1,
+            _pad: [0; 5],
+        };
+        Ok(())
+    }
+
+    /// Disarm one slot.
+    pub fn disarm_trigger(&mut self, slot: usize) {
+        self.triggers[slot].active = 0;
+    }
+
+    /// Disarm every trigger protecting `asset_index`. Called whenever a
+    /// position dies by ANY path (close, liquidation, ADL) — an orphaned stop
+    /// silently attaches to the *next* position the trader opens, which is a
+    /// bug class Flash patched after real incidents.
+    pub fn clear_asset_triggers(&mut self, asset_index: u8) -> u32 {
+        let mut cleared = 0;
+        for t in self.triggers.iter_mut() {
+            if t.active == 1 && t.asset_index == asset_index {
+                t.active = 0;
+                cleared += 1;
+            }
+        }
+        cleared
     }
 }

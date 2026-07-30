@@ -83,23 +83,23 @@ pub mod anqa_core {
     /// Base layer: create the deposit ledger, empty. Must exist before any
     /// deposit — it is the permanent record the rollup reads.
     pub fn initialize_ledger(ctx: Context<InitializeLedger>) -> Result<()> {
-        instructions::basket::initialize_ledger(ctx)
+        instructions::initialize_ledger::handler(ctx)
     }
 
-    /// Move the basket into the rollup. Session-based: the trader chooses when
+    /// Move the portfolio into the rollup. Session-based: the trader chooses when
     /// their state goes in and when it comes home.
     pub fn delegate_portfolio(ctx: Context<DelegatePortfolio>, market_id: u64) -> Result<()> {
-        instructions::basket::delegate_portfolio(ctx, market_id)
+        instructions::delegate_portfolio::handler(ctx, market_id)
     }
 
-    /// Checkpoint the basket to base layer without leaving the rollup.
+    /// Checkpoint the portfolio to base layer without leaving the rollup.
     pub fn commit_portfolio(ctx: Context<CommitPortfolio>) -> Result<()> {
-        instructions::basket::commit_portfolio(ctx)
+        instructions::commit_portfolio::handler(ctx)
     }
 
-    /// Commit and return the basket to base layer.
+    /// Commit and return the portfolio to base layer.
     pub fn undelegate_portfolio(ctx: Context<CommitPortfolio>) -> Result<()> {
-        instructions::basket::undelegate_portfolio(ctx)
+        instructions::undelegate_portfolio::handler(ctx)
     }
 
     /// Base layer: open a margin account. This is also the trader's seat.
@@ -107,14 +107,24 @@ pub mod anqa_core {
         instructions::open_portfolio::handler(ctx)
     }
 
-    /// Base layer: deposit collateral. One of only two instructions that move tokens.
-    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
-        instructions::deposit::handler(ctx, amount)
+    /// Base layer: deposit collateral. One of only two instructions that move
+    /// tokens. With `queue_claim` a deposit receipt is delegated to the rollup
+    /// with `claim_deposit` queued behind it, so deposit → credited is one
+    /// signature; the receipt then closes itself via `close_deposit_receipt`.
+    pub fn deposit(ctx: Context<Deposit>, amount: u64, queue_claim: bool) -> Result<()> {
+        instructions::deposit::handler(ctx, amount, queue_claim)
+    }
+
+    /// Base layer: close a landed deposit receipt, rent back to the trader.
+    /// Signerless — dispatched by the validator, retryable by anyone.
+    pub fn close_deposit_receipt(ctx: Context<CloseDepositReceipt>) -> Result<()> {
+        instructions::close_deposit_receipt::handler(ctx)
     }
 
     /// Promote proven-backed profit from junior `pnl` into withdrawable
     /// `capital`. Without this a winner can close a profitable position and
-    /// still be unable to take the profit home. Permissionless.
+    /// still be unabl
+    /// e to take the profit home. Permissionless.
     pub fn realize_pnl(ctx: Context<RealizePnl>) -> Result<()> {
         instructions::realize_pnl::handler(ctx)
     }
@@ -125,31 +135,83 @@ pub mod anqa_core {
         instructions::withdraw::handler(ctx, amount)
     }
 
-    /// Credit a basket with deposits recorded on the base-layer ledger.
-    /// Runs wherever the basket lives; idempotent via its high-water mark.
+    /// Credit a portfolio with deposits recorded on the base-layer ledger.
+    /// Runs wherever the portfolio lives; idempotent via its high-water mark.
     pub fn claim_deposit(ctx: Context<ClaimDeposit>) -> Result<()> {
-        instructions::boundary::claim_deposit(ctx)
+        instructions::claim_deposit::handler(ctx)
     }
 
-    /// Base layer: reserve collateral and open a withdrawal receipt.
-    pub fn request_withdraw(ctx: Context<RequestWithdraw>, amount: u64) -> Result<()> {
-        instructions::boundary::request_withdraw(ctx, amount)
+    /// Base layer: reserve collateral, open a withdrawal receipt, and delegate
+    /// it to the rollup. With `queue_authorize` the validator dispatches the
+    /// rollup leg itself; without it a keeper (or the client) drives it.
+    pub fn request_withdraw(
+        ctx: Context<RequestWithdraw>,
+        amount: u64,
+        queue_authorize: bool,
+    ) -> Result<()> {
+        instructions::request_withdraw::handler(ctx, amount, queue_authorize)
     }
 
-    /// Wherever the basket lives: let the risk engine judge the request and
-    /// write the true amount into the receipt.
+    /// Rollup: let the risk engine judge the request, write the verdict into
+    /// the receipt, and send it home with the settle queued behind it.
     pub fn authorize_withdraw(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
-        instructions::boundary::authorize_withdraw(ctx)
+        instructions::authorize_withdraw::handler(ctx)
     }
 
-    /// Base layer: pay out an authorized receipt and release the reservation.
+    /// Base layer: pay out a settled receipt and release the reservation.
+    /// Signerless — dispatched by the validator, retryable by anyone.
     pub fn settle_withdraw(ctx: Context<SettleWithdraw>) -> Result<()> {
-        instructions::boundary::settle_withdraw(ctx)
+        instructions::settle_withdraw::handler(ctx)
     }
 
-    /// Base layer: delegate the book into the ephemeral rollup.
+    /// Base layer: settle a trader out against the last committed state of
+    /// their portfolio — the non-custodial escape hatch. Owner-signed always;
+    /// permissionless while the market is paused.
+    pub fn forced_exit(ctx: Context<ForceExit>) -> Result<()> {
+        instructions::forced_exit::handler(ctx)
+    }
+
+    /// Rollup, once per asset after delegation: jump the accrual clock into
+    /// the rollup's slot domain. Kernel-gated to empty markets, so it can
+    /// never skip funding or hide losses. Permissionless.
+    pub fn reanchor_oracle(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
+        instructions::reanchor_oracle::handler(ctx, asset_index)
+    }
+
+    // ── delegation: one instruction per account, so each seed validation gets
+    //    its own stack frame. All five must run before the first rollup trade.
+
     pub fn delegate_book(ctx: Context<DelegateBook>, market_id: u64) -> Result<()> {
         instructions::delegate_book::handler(ctx, market_id)
+    }
+
+    pub fn delegate_market_config(
+        ctx: Context<DelegateMarketConfig>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::delegate_market_config::handler(ctx, market_id)
+    }
+
+    pub fn delegate_risk_group(ctx: Context<DelegateRiskGroup>, market_id: u64) -> Result<()> {
+        instructions::delegate_risk_group::handler(ctx, market_id)
+    }
+
+    pub fn delegate_asset_slots(ctx: Context<DelegateAssetSlots>, market_id: u64) -> Result<()> {
+        instructions::delegate_asset_slots::handler(ctx, market_id)
+    }
+
+    pub fn delegate_internal_oracle(
+        ctx: Context<DelegateInternalOracle>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::delegate_internal_oracle::handler(ctx, market_id)
+    }
+
+    pub fn delegate_oracle_state(
+        ctx: Context<DelegateOracleState>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::delegate_oracle_state::handler(ctx, market_id)
     }
 
     /// Place an order. Crosses the resting book, then rests the remainder; every
@@ -189,7 +251,7 @@ pub mod anqa_core {
 
     /// Settle one account against the latest accrual.
     pub fn refresh_portfolio(ctx: Context<RefreshPortfolio>) -> Result<()> {
-        instructions::crank::refresh_handler(ctx)
+        instructions::refresh_portfolio::handler(ctx)
     }
 
     /// Create the protocol vault — venue revenue, held apart from both trader
@@ -200,7 +262,7 @@ pub mod anqa_core {
         insurance_target_bps: u16,
         post_target_insurance_bps: u16,
     ) -> Result<()> {
-        instructions::protocol_fees::initialize(
+        instructions::initialize_protocol_vault::handler(
             ctx,
             market_id,
             insurance_target_bps,
@@ -210,7 +272,7 @@ pub mod anqa_core {
 
     /// Collect accrued protocol revenue. Cannot reach collateral or insurance.
     pub fn collect_fees(ctx: Context<CollectFees>, amount: u64) -> Result<()> {
-        instructions::protocol_fees::collect(ctx, amount)
+        instructions::collect_protocol_fees::handler(ctx, amount)
     }
 
     /// Create the insurance vault — layer 2 of the loss waterfall, held apart
@@ -219,7 +281,7 @@ pub mod anqa_core {
         ctx: Context<InitializeInsuranceVault>,
         market_id: u64,
     ) -> Result<()> {
-        instructions::insurance::initialize_vault(ctx, market_id)
+        instructions::initialize_insurance_vault::handler(ctx, market_id)
     }
 
     /// Fund an asset's insurance, long and short domains separately.
@@ -230,7 +292,7 @@ pub mod anqa_core {
         long_amount: u64,
         short_amount: u64,
     ) -> Result<()> {
-        instructions::insurance::fund(ctx, asset_index, long_amount, short_amount)
+        instructions::fund_insurance::handler(ctx, asset_index, long_amount, short_amount)
     }
 
     /// Auto-deleverage a profitable position — layer 4, reached only when
@@ -248,7 +310,7 @@ pub mod anqa_core {
     /// Pull every resting order this trader has. The panic button — permitted
     /// even while the market is paused, since a pause must not trap orders.
     pub fn cancel_all_orders(ctx: Context<CancelBulk>) -> Result<()> {
-        instructions::cancel_bulk::cancel_all(ctx)
+        instructions::cancel_all::handler(ctx)
     }
 
     /// Pull only quotes at or more aggressive than a price, leaving the passive
@@ -258,7 +320,7 @@ pub mod anqa_core {
         side: Side,
         price_in_ticks: u64,
     ) -> Result<()> {
-        instructions::cancel_bulk::cancel_up_to(ctx, side, price_in_ticks)
+        instructions::cancel_up_to::handler(ctx, side, price_in_ticks)
     }
 
     /// Post a ladder of post-only quotes in one transaction. All-or-nothing.
@@ -289,7 +351,7 @@ pub mod anqa_core {
         limit_price_in_ticks: u64,
         max_base_lots: u64,
     ) -> Result<()> {
-        instructions::trigger_order::place(
+        instructions::place_trigger_order::handler(
             ctx,
             trigger_id,
             trigger_price,
@@ -299,16 +361,16 @@ pub mod anqa_core {
         )
     }
 
-    /// Cancel an armed trigger and reclaim its rent.
-    pub fn cancel_trigger_order(ctx: Context<CancelTriggerOrder>) -> Result<()> {
-        instructions::trigger_order::cancel(ctx)
+    /// Disarm a trigger slot.
+    pub fn cancel_trigger_order(ctx: Context<CancelTriggerOrder>, trigger_id: u64) -> Result<()> {
+        instructions::cancel_trigger_order::handler(ctx, trigger_id)
     }
 
     /// Fire an armed trigger. Permissionless — a stop-loss is worthless if it
     /// depends on its owner being online. Pair with `close_position` in the
     /// same transaction.
-    pub fn fire_trigger_order(ctx: Context<FireTriggerOrder>) -> Result<()> {
-        instructions::trigger_order::fire(ctx)
+    pub fn fire_trigger_order(ctx: Context<FireTriggerOrder>, trigger_id: u64) -> Result<()> {
+        instructions::fire_trigger_order::handler(ctx, trigger_id)
     }
 
     /// Amend a resting order. Shrinking at the same price keeps queue
@@ -341,11 +403,11 @@ pub mod anqa_core {
 
     /// Rollup: checkpoint book state to base chain.
     pub fn commit_book(ctx: Context<CommitBook>) -> Result<()> {
-        instructions::commit_book::commit_handler(ctx)
+        instructions::commit_book::handler(ctx)
     }
 
     /// Rollup: commit and return the book to base chain.
     pub fn commit_and_undelegate_book(ctx: Context<CommitBook>) -> Result<()> {
-        instructions::commit_book::commit_and_undelegate_handler(ctx)
+        instructions::undelegate_book::handler(ctx)
     }
 }

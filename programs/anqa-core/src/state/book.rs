@@ -360,6 +360,53 @@ impl BookSide {
         (removed, freed)
     }
 
+    /// No free slots left.
+    pub fn is_full(&self) -> bool {
+        self.free_head == NIL
+    }
+
+    /// The least aggressive live order — the tail of the priority list.
+    pub fn worst(&self) -> Option<RestingOrder> {
+        let mut cursor = self.head;
+        let mut last = NIL;
+        while cursor != NIL {
+            last = cursor;
+            cursor = self.orders[cursor as usize].next;
+        }
+        if last == NIL {
+            None
+        } else {
+            Some(self.orders[last as usize])
+        }
+    }
+
+    /// Remove the least aggressive order and return it, so the caller can
+    /// release the margin it held and tell its owner.
+    pub fn evict_worst(&mut self) -> Option<RestingOrder> {
+        let mut prev = NIL;
+        let mut cursor = self.head;
+        if cursor == NIL {
+            return None;
+        }
+        loop {
+            let next = self.orders[cursor as usize].next;
+            if next == NIL {
+                break;
+            }
+            prev = cursor;
+            cursor = next;
+        }
+        let evicted = self.orders[cursor as usize];
+        if prev == NIL {
+            self.head = NIL;
+        } else {
+            self.orders[prev as usize].next = NIL;
+        }
+        self.free_slot(cursor);
+        self.count = self.count.saturating_sub(1);
+        Some(evicted)
+    }
+
     /// Base lots resting at or better than `limit`, within the cross budget.
     /// `self` is the resting side.
     fn liquidity_within(&self, resting_side: Side, limit: u64) -> u64 {
@@ -441,11 +488,42 @@ impl Book {
         }
     }
 
+    /// Would `limit_price` outrank the least aggressive order on `side`?
+    /// Strictly better price only — an equal price arrives later and loses on
+    /// time, so it earns no eviction.
+    pub fn outranks_worst(&self, side: Side, limit_price: u64) -> bool {
+        match self.side(side).worst() {
+            None => true,
+            Some(w) => match side {
+                Side::Bid => limit_price > w.price_in_ticks,
+                Side::Ask => limit_price < w.price_in_ticks,
+            },
+        }
+    }
+
+    /// Rest an order without crossing, taking a fresh sequence number. Used by
+    /// the eviction path in `place_order`, after `evict_worst` has made room.
+    pub fn rest(
+        &mut self,
+        side: Side,
+        trader: Pubkey,
+        client_order_id: u64,
+        price_in_ticks: u64,
+        base_lots: u64,
+    ) -> Result<()> {
+        let seq = self.next_seq();
+        self.side_mut(side)
+            .insert(side, trader, client_order_id, price_in_ticks, base_lots, seq)?;
+        Ok(())
+    }
+
     /// Place an order: cross first, rest the remainder.
     ///
-    /// Returns the fills produced and the lots left resting. Fills are priced at
-    /// the **maker's** price — the resting order named its terms and time
-    /// priority earns it.
+    /// Returns the fills produced, the lots that should rest, and whether they
+    /// actually did — `false` means the side was full, the remainder is NOT on
+    /// the book, and the caller decides between eviction and refusal. Fills are
+    /// priced at the **maker's** price — the resting order named its terms and
+    /// time priority earns it.
     pub fn place(
         &mut self,
         side: Side,
@@ -454,7 +532,7 @@ impl Book {
         base_lots: u64,
         trader: Pubkey,
         client_order_id: u64,
-    ) -> Result<(Vec<FillRecord>, u64)> {
+    ) -> Result<(Vec<FillRecord>, u64, bool)> {
         require!(limit_price > 0, AnqaError::InvalidPrice);
         require!(base_lots > 0, AnqaError::InvalidSize);
 
@@ -527,14 +605,85 @@ impl Book {
         }
 
         let rests = matches!(order_type, OrderType::Limit | OrderType::PostOnly);
+        let mut rested = true;
         if remaining > 0 && rests {
-            let seq = self.next_seq();
-            self.side_mut(side)
-                .insert(side, trader, client_order_id, limit_price, remaining, seq)?;
+            if self.side(side).is_full() {
+                // No slot. Not an error here: the caller can evict the least
+                // aggressive order and call `rest`, or refuse the order.
+                rested = false;
+            } else {
+                let seq = self.next_seq();
+                self.side_mut(side)
+                    .insert(side, trader, client_order_id, limit_price, remaining, seq)?;
+            }
         } else {
             remaining = 0;
         }
 
-        Ok((fills, remaining))
+        Ok((fills, remaining, rested))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::Zeroable;
+
+    /// A bid side filled to capacity with prices 100..100+N, all distinct owners.
+    fn full_bid_book() -> Box<Book> {
+        let mut book: Box<Book> = Box::new(Book::zeroed());
+        book.init(1, 255);
+        for i in 0..ORDERS_PER_SIDE as u64 {
+            let (fills, resting, rested) = book
+                .place(Side::Bid, OrderType::Limit, 100 + i, 10, Pubkey::new_unique(), i)
+                .unwrap();
+            assert!(fills.is_empty());
+            assert_eq!(resting, 10);
+            assert!(rested);
+        }
+        assert!(book.bids.is_full());
+        book
+    }
+
+    #[test]
+    fn full_side_reports_not_rested_and_keeps_the_book_intact() {
+        let mut book = full_bid_book();
+        let (fills, resting, rested) = book
+            .place(Side::Bid, OrderType::Limit, 500, 10, Pubkey::new_unique(), 99)
+            .unwrap();
+        assert!(fills.is_empty());
+        assert_eq!(resting, 10);
+        assert!(!rested);
+        assert_eq!(book.bids.count as usize, ORDERS_PER_SIDE);
+        // The refused order left no trace.
+        assert_eq!(book.bids.best().unwrap().price_in_ticks, 100 + ORDERS_PER_SIDE as u64 - 1);
+    }
+
+    #[test]
+    fn evict_worst_removes_the_least_aggressive_and_frees_its_slot() {
+        let mut book = full_bid_book();
+        assert_eq!(book.bids.worst().unwrap().price_in_ticks, 100);
+
+        let evicted = book.bids.evict_worst().unwrap();
+        assert_eq!(evicted.price_in_ticks, 100);
+        assert!(!book.bids.is_full());
+        assert_eq!(book.bids.count as usize, ORDERS_PER_SIDE - 1);
+
+        // The freed slot is immediately reusable, and priority order held.
+        book.rest(Side::Bid, Pubkey::new_unique(), 7, 500, 5).unwrap();
+        assert!(book.bids.is_full());
+        assert_eq!(book.bids.best().unwrap().price_in_ticks, 500);
+        assert_eq!(book.bids.worst().unwrap().price_in_ticks, 101);
+    }
+
+    #[test]
+    fn outranks_worst_requires_a_strictly_better_price() {
+        let book = full_bid_book(); // worst bid rests at 100
+        assert!(book.outranks_worst(Side::Bid, 101));
+        // Equal price arrived later and loses on time: no eviction earned.
+        assert!(!book.outranks_worst(Side::Bid, 100));
+        assert!(!book.outranks_worst(Side::Bid, 99));
+        // An empty side outranks trivially (nothing to evict, but nothing blocks).
+        assert!(book.outranks_worst(Side::Ask, 1));
     }
 }
