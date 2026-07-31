@@ -5,6 +5,7 @@ import { AnchorProvider, BN, Program, type Idl } from "@coral-xyz/anchor";
 import { useAnchorWallet } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey } from "@solana/web3.js";
 import idl from "./anqa_core.json";
+import { readOpenInterest } from "./portfolio";
 import {
   anqaAccounts,
   BASE_RPC,
@@ -22,6 +23,9 @@ export type VenueState = {
   market: any | null;
   /** Where the book currently is. Delegated = trading is live in the rollup. */
   delegated: boolean;
+  /** Whether *this wallet's* portfolio is in a rollup session. Not the same
+   *  question as the venue's state, and must never be shown as if it were. */
+  portfolioDelegated: boolean;
   markPrice: number | null;
   /** Public prints. The only thing a dark market shows the world. */
   tape: ReturnType<typeof readTape>;
@@ -33,6 +37,14 @@ export type VenueState = {
   hiddenAsks: number;
   /** Fills matched on the book, awaiting the engine's settlement. */
   pendingFills: number;
+  /** Lifetime prints on the tape (the ring only holds the last 128). */
+  tapeCount: number;
+  /**
+   * Aggregate open interest in quote atoms — long side, which equals short.
+   * Publishable precisely because it is aggregate: it sizes the venue without
+   * exposing a single account.
+   */
+  openInterest: string | null;
   portfolio: any | null;
   ledger: any | null;
   triggers: ReturnType<typeof readTriggers>;
@@ -43,6 +55,7 @@ export type VenueState = {
 const EMPTY: VenueState = {
   market: null,
   delegated: false,
+  portfolioDelegated: false,
   markPrice: null,
   tape: [],
   myBids: [],
@@ -50,6 +63,8 @@ const EMPTY: VenueState = {
   hiddenBids: 0,
   hiddenAsks: 0,
   pendingFills: 0,
+  tapeCount: 0,
+  openInterest: null,
   portfolio: null,
   ledger: null,
   triggers: [],
@@ -132,21 +147,36 @@ export function useAnqa(pollMs = 1500) {
       const delegated = bookInfo?.owner?.equals(DLP) ?? false;
       const live = delegated ? programs.er : programs.base;
 
-      const [oracle, book, tapeAcct] = await Promise.all([
+      const [oracle, book, tapeAcct, slotsInfo] = await Promise.all([
         live.account.oracleState.fetch(acc.oracleState).catch(() => null),
         live.account.book.fetch(acc.book).catch(() => null),
         live.account.fillTape.fetch(acc.tape).catch(() => null),
+        // Raw bytes: the kernel's engine slot is opaque to Anchor, and the
+        // one field worth publishing is aggregate open interest.
+        (delegated ? conns.er : conns.base).getAccountInfo(acc.assetSlots).catch(() => null),
       ]);
+
+      const openInterest = slotsInfo ? readOpenInterest(slotsInfo.data) : null;
 
       let portfolio: any = null;
       let ledger: any = null;
+      let portfolioDelegated = false;
       if (owner) {
-        [portfolio, ledger] = await Promise.all([
-          live.account.portfolio.fetch(acc.portfolioOf(owner)).catch(() => null),
+        const pfKey = acc.portfolioOf(owner);
+        const [pfInfo, l] = await Promise.all([
+          conns.base.getAccountInfo(pfKey).catch(() => null),
           programs.base.account.userDepositLedger
             .fetch(acc.ledgerOf(owner))
             .catch(() => null),
         ]);
+        ledger = l;
+        // The portfolio answers from whichever side currently owns it.
+        portfolioDelegated = pfInfo?.owner?.equals(DLP) ?? false;
+        if (pfInfo) {
+          portfolio = await (portfolioDelegated ? programs.er : programs.base).account.portfolio
+            .fetch(pfKey)
+            .catch(() => null);
+        }
       }
 
       // Split what we can read into "mine" and "someone's, but not mine".
@@ -169,6 +199,7 @@ export function useAnqa(pollMs = 1500) {
       setState({
         market,
         delegated,
+        portfolioDelegated,
         markPrice: oracle ? Number((oracle as any).lastPrice.toString()) : null,
         tape: tapeAcct ? readTape(tapeAcct as never) : [],
         myBids,
@@ -176,6 +207,8 @@ export function useAnqa(pollMs = 1500) {
         hiddenBids,
         hiddenAsks,
         pendingFills: book ? Number((book as any).pendingCount ?? 0) : 0,
+        tapeCount: tapeAcct ? Number((tapeAcct as any).count.toString()) : 0,
+        openInterest,
         portfolio,
         ledger,
         triggers: portfolio ? readTriggers((portfolio as any).triggers) : [],

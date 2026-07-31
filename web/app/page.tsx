@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Header } from "@/components/Header";
-import { BookPanel } from "@/components/BookPanel";
-import { TapePanel } from "@/components/TapePanel";
-import { OrderEntry } from "@/components/OrderEntry";
-import { AccountPanel } from "@/components/AccountPanel";
+import { MarketBar } from "@/components/MarketBar";
+import { Chart } from "@/components/Chart";
+import { OrderBook } from "@/components/OrderBook";
+import { TradeForm } from "@/components/TradeForm";
+import { BottomTabs } from "@/components/BottomTabs";
 import { ProofPanel } from "@/components/ProofPanel";
-import { PositionPanel } from "@/components/PositionPanel";
 import { useAnqa } from "@/lib/useAnqa";
 
 type Toast = { id: number; msg: string; err?: boolean };
@@ -15,8 +15,12 @@ type Toast = { id: number; msg: string; err?: boolean };
 /**
  * The terminal.
  *
- * Left, what you do. Centre, what you are allowed to see. Right, what the
- * world is told. The layout is the argument.
+ * Laid out the way a perp trader expects — chart centre, book beside it,
+ * ticket right, positions below — so the one thing that *is* unusual reads
+ * as a deliberate absence rather than a missing feature.
+ *
+ * Every cell is placed explicitly. Relying on grid auto-placement here put
+ * panels in the wrong columns as soon as a row-span was involved.
  */
 export default function Terminal() {
   const anqa = useAnqa();
@@ -25,12 +29,13 @@ export default function Terminal() {
   const notify = useCallback((msg: string, err = false) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t.slice(-2), { id, msg, err }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
   }, []);
 
   return (
     <div className="flex flex-col h-dvh">
       <Header anqa={anqa} />
+      <MarketBar anqa={anqa} />
 
       {anqa.error && (
         <div className="shrink-0 px-4 py-1.5 bg-ask/10 border-b border-ask/25 text-[11px] text-ask">
@@ -38,21 +43,31 @@ export default function Terminal() {
         </div>
       )}
 
-      <main className="flex-1 min-h-0 grid gap-2 p-2 grid-cols-1 lg:grid-cols-[268px_minmax(0,1fr)_312px] lg:grid-rows-[minmax(0,1fr)_240px]">
-        <div className="flex flex-col gap-2 min-h-0 lg:row-span-2">
-          <OrderEntry anqa={anqa} onDone={notify} />
-          <PositionPanel anqa={anqa} onDone={notify} />
+      <main
+        className="flex-1 min-h-0 grid gap-2 p-2
+                   grid-cols-1
+                   lg:grid-cols-[minmax(0,1fr)_300px_290px]
+                   lg:grid-rows-[minmax(0,1fr)_260px]"
+      >
+        {/* A real floor, not just min-h-0: stacked on a narrow window the
+            chart would otherwise collapse to nothing. */}
+        <div className="min-h-[440px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
+          <Chart anqa={anqa} />
         </div>
 
-        <BookPanel anqa={anqa} />
-
-        <div className="flex flex-col gap-2 min-h-0 lg:row-span-2">
-          <TapePanel anqa={anqa} />
-          <ProofPanel anqa={anqa} />
+        <div className="min-h-[320px] lg:min-h-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
+          <OrderBook anqa={anqa} />
         </div>
 
-        <div className="min-h-0">
-          <AccountPanel anqa={anqa} onDone={notify} />
+        <div className="flex flex-col gap-2 min-h-0 lg:col-start-3 lg:row-start-1 lg:row-span-2">
+          <TradeForm anqa={anqa} onDone={notify} />
+          <div className="hidden 2xl:block min-h-0 shrink-0">
+            <ProofPanel anqa={anqa} />
+          </div>
+        </div>
+
+        <div className="min-h-[200px] lg:min-h-0 lg:col-start-1 lg:row-start-2">
+          <BottomTabs anqa={anqa} onDone={notify} />
         </div>
       </main>
 
@@ -69,9 +84,7 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
         <div
           key={t.id}
           className={`print-in px-3 py-1.5 rounded-md border text-[12px] backdrop-blur-sm ${
-            t.err
-              ? "bg-ask/12 border-ask/35 text-ask"
-              : "bg-raised/95 border-line text-text"
+            t.err ? "bg-ask/12 border-ask/35 text-ask" : "bg-raised/95 border-line text-text"
           }`}
         >
           {t.msg}
@@ -103,6 +116,11 @@ function Footer({ anqa }: { anqa: ReturnType<typeof useAnqa> }) {
       <span>
         market <span className="tnum text-muted">{anqa.marketId.toString()}</span>
       </span>
+      {anqa.pendingFills > 0 && (
+        <span className="text-phoenix/90">
+          {anqa.pendingFills} fill{anqa.pendingFills > 1 ? "s" : ""} awaiting settlement
+        </span>
+      )}
       {anqa.loading && <span className="text-phoenix/70">syncing…</span>}
       <span className="ml-auto">devnet</span>
     </footer>

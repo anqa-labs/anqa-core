@@ -5,7 +5,8 @@ import { Panel } from "./ui";
 import { ER_RPC, shortKey } from "@/lib/anqa";
 import type { Anqa } from "@/lib/useAnqa";
 
-type Probe = { label: string; account: string; readable: boolean | null; note: string };
+type Verdict = "readable" | "refused" | "absent" | "pending";
+type Probe = { label: string; account: string; verdict: Verdict; note: string };
 
 /**
  * The claim, checked live.
@@ -38,13 +39,20 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
       for (const t of targets) {
         if (!t.key) continue;
         // An unauthenticated reader: no wallet, no membership, just an RPC.
-        const info = await anqa.conns.er.getAccountInfo(t.key).catch(() => null);
-        out.push({
-          label: t.label,
-          account: t.key.toBase58(),
-          readable: info !== null,
-          note: t.note,
-        });
+        const inRollup = await anqa.conns.er.getAccountInfo(t.key).catch(() => null);
+        let verdict: Verdict;
+        if (inRollup !== null) {
+          verdict = "readable";
+        } else {
+          // Silence has two meanings and they are not interchangeable: an
+          // account the enclave *won't* show us, and one that was never
+          // created. Reporting the second as the first would claim privacy
+          // this endpoint is not providing — the exact lie this panel exists
+          // to avoid. Base chain settles which it is.
+          const onBase = await anqa.conns.base.getAccountInfo(t.key).catch(() => null);
+          verdict = onBase === null ? "absent" : "refused";
+        }
+        out.push({ label: t.label, account: t.key.toBase58(), verdict, note: t.note });
       }
       if (!cancelled) setProbes(out);
     };
@@ -70,17 +78,31 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
                 {shortKey(p.account, 6)}
               </span>
             </div>
-            {p.readable === null ? (
-              <span className="text-[11px] text-dim">…</span>
-            ) : p.readable ? (
-              <span className="text-[11px] text-ask">readable</span>
-            ) : (
-              <span className="text-[11px] text-bid">refused</span>
-            )}
+            <Verdict verdict={p.verdict} />
           </div>
         ))}
       </div>
 
+      <VerdictFooter isTee={isTee} />
+    </Panel>
+  );
+}
+
+/** Three outcomes, three meanings — never collapsed into two. */
+function Verdict({ verdict }: { verdict: Verdict }) {
+  if (verdict === "pending") return <span className="text-[11px] text-dim">…</span>;
+  if (verdict === "readable") return <span className="text-[11px] text-ask">readable</span>;
+  if (verdict === "refused") return <span className="text-[11px] text-bid">refused</span>;
+  return (
+    <span className="text-[11px] text-dim" title="This account does not exist yet">
+      not created
+    </span>
+  );
+}
+
+function VerdictFooter({ isTee }: { isTee: boolean }) {
+  return (
+    <>
       <footer className="shrink-0 px-3 py-2 border-t border-line-soft">
         {isTee ? (
           <p className="text-[10px] text-dim leading-relaxed">
@@ -97,6 +119,6 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
           </p>
         )}
       </footer>
-    </Panel>
+    </>
   );
 }

@@ -88,6 +88,28 @@ export function readKernel(inner: number[] | Uint8Array): KernelState {
   };
 }
 
+// ── the engine's asset slot ──────────────────────────────────────────────
+// Pinned by the same test as the portfolio offsets above.
+const SLOT_ANCHOR_DISC = 8;
+const ENGINE_SLOT_OFFSET = 8; // the asset tag precedes the engine slot
+const OI_LONG = 273; // u128 LE, POS_SCALE units
+
+/**
+ * Aggregate open interest, in quote atoms.
+ *
+ * Long-side notional equals short-side by construction — a perp fill mints
+ * one of each — so one number sizes the venue. It is safe to publish for
+ * exactly the reason positions are not: it is a total, and a total names
+ * nobody.
+ */
+export function readOpenInterest(data: Uint8Array): string | null {
+  const base = SLOT_ANCHOR_DISC + ENGINE_SLOT_OFFSET + OI_LONG;
+  if (data.length < base + 16) return null;
+  const oiQ = u(data, base, 16);
+  // POS_SCALE units of base lots — report lots, the unit the book speaks.
+  return (oiQ / POS_SCALE).toString();
+}
+
 /** Free collateral: equity minus what positions and resting orders hold. */
 export function freeMargin(k: KernelState, reservedByOrders: bigint): bigint {
   if (k.certifiedEquity <= 0n) return 0n;

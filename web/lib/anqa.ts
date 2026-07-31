@@ -201,3 +201,16 @@ export function readTriggers(triggers: TriggerSlot[]) {
       direction: t.direction === 0 ? ("above" as const) : ("below" as const),
     }));
 }
+
+/** Anchor errors are verbose; the trader wants the sentence, not the stack. */
+export function readableError(e: any): string {
+  const msg = String(e?.message ?? e);
+  const anchor = e?.error?.errorMessage ?? e?.errorMessage;
+  if (anchor) return anchor;
+  const m = msg.match(/Error Message: ([^.]+)\./);
+  if (m) return m[1];
+  if (msg.includes("User rejected")) return "Rejected in wallet";
+  if (msg.includes("insufficient lamports") || msg.includes("Attempt to debit"))
+    return "Not enough devnet SOL for rent";
+  return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
+}
