@@ -80,6 +80,13 @@ impl AssetSlots {
     pub fn markets_mut(&mut self) -> &mut [PercMarket<AssetTag>] {
         bytemuck::cast_slice_mut(&mut self.inner)
     }
+
+    /// Read-only view of the engine slots. The crank needs the asset's stored
+    /// price before it can decide what price to accrue to, and it must read
+    /// that without holding the mutable borrow the kernel view takes.
+    pub fn markets(&self) -> &[PercMarket<AssetTag>] {
+        bytemuck::cast_slice(&self.inner)
+    }
 }
 
 /// A trader's margin account: collateral, positions, PnL, funding counters.

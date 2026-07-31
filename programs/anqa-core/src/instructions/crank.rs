@@ -18,12 +18,13 @@
 //! identity, staleness and confidence before marking anyone against it.
 
 use anchor_lang::prelude::*;
-use percolator::MarketGroupV16ViewMut;
+use percolator::{MarketGroupV16ViewMut, MAX_MARGIN_BPS};
 
 use crate::constants::{
     ASSET_SLOTS_SEED, INTERNAL_ORACLE_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
+use crate::instructions::initialize_risk::{MAX_ACCRUAL_DT_SLOTS, MAX_PRICE_MOVE_BPS_PER_SLOT};
 use crate::state::{
     accept_mark, read_internal, AssetSlots, InternalOracle, Market, OracleState, RiskGroup,
 };
@@ -83,22 +84,124 @@ pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> 
     let mut group = ctx.accounts.risk_group.load_mut()?;
     let n_assets = group.asset_count();
     let mut slots = ctx.accounts.asset_slots.load_mut()?;
+
+    // How far the kernel will let the mark travel in this accrual, and where
+    // it currently sits. Both are needed *before* the view borrows the slots.
+    let (stored_price, budget_bps_x_slots) = {
+        let asset = slots.markets()[asset_index as usize].engine.asset;
+        (
+            asset.effective_price.get(),
+            (MAX_PRICE_MOVE_BPS_PER_SLOT as u128)
+                .saturating_mul(MAX_ACCRUAL_DT_SLOTS as u128),
+        )
+    };
+    let accrual_price = step_toward(stored_price, mark_price, budget_bps_x_slots);
+
     let mut view =
         MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
 
     map_risk(view.accrue_asset_to_not_atomic(
         asset_index as usize,
         slot,
-        mark_price,
+        accrual_price,
         funding_rate_e9,
         true,
     ))?;
 
-    msg!(
-        "anqa: crank -> mark {} (ema {}) funding {}",
-        mark_price,
-        ema,
-        funding_rate_e9
-    );
+    if accrual_price != mark_price {
+        msg!(
+            "anqa: crank -> {} of {} (catching up, {} bps/accrual)",
+            accrual_price,
+            mark_price,
+            budget_bps_x_slots
+        );
+    } else {
+        msg!(
+            "anqa: crank -> mark {} (ema {}) funding {}",
+            mark_price,
+            ema,
+            funding_rate_e9
+        );
+    }
     Ok(())
+}
+
+/// Move `from` toward `to` by at most the kernel's per-accrual price budget.
+///
+/// **This is what stops a stalled crank from wedging the market for good.**
+/// The kernel refuses an accrual whose price jump exceeds
+/// `max_price_move_bps_per_slot x max_accrual_dt_slots` — 1% here — and the
+/// refusal is not self-healing: the gap between the stored price and the real
+/// one only widens while the crank is down, so every later crank is refused
+/// too, and the venue stays frozen until the price happens to wander back.
+///
+/// Feeding the kernel a clamped price instead converges in a few ticks
+/// without ever asking it to accept a jump it considers unsafe. Marks move at
+/// most 1% per accrual either way; the only thing that changes is that the
+/// venue recovers on its own.
+fn step_toward(from: u64, to: u64, budget_bps: u128) -> u64 {
+    if from == 0 || from == to {
+        return to;
+    }
+    // Guard the edge the kernel checks: strictly less than the budget.
+    let max_move = (from as u128)
+        .saturating_mul(budget_bps)
+        .saturating_div(MAX_MARGIN_BPS as u128)
+        .saturating_sub(1);
+    let diff = (from as u128).abs_diff(to as u128);
+    if diff <= max_move {
+        return to;
+    }
+    let step = u64::try_from(max_move).unwrap_or(0);
+    if to > from {
+        from.saturating_add(step)
+    } else {
+        from.saturating_sub(step)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_toward;
+
+    /// 1 bps/slot x 100 slots = 1% of the stored price per accrual.
+    const BUDGET: u128 = 100;
+
+    #[test]
+    fn a_small_move_is_taken_whole() {
+        // 0.1% — well inside the budget, so the mark tracks exactly.
+        assert_eq!(step_toward(64_000_000_000, 64_064_000_000, BUDGET), 64_064_000_000);
+    }
+
+    #[test]
+    fn a_move_past_the_budget_is_clamped_not_refused() {
+        // The failure this exists for: the crank stalled, BTC moved ~1.01%,
+        // and the kernel would reject the jump outright — permanently, since
+        // the gap never shrinks on its own.
+        let from = 64_306_180_000u64;
+        let to = 63_657_000_000u64;
+        let stepped = step_toward(from, to, BUDGET);
+        assert!(stepped > to, "must not overshoot the target");
+        assert!(stepped < from, "must move toward it");
+        // Strictly inside the kernel's gate: diff * 10_000 <= budget * dt * from.
+        let diff = (from - stepped) as u128;
+        assert!(diff * 10_000 < BUDGET * from as u128);
+    }
+
+    #[test]
+    fn repeated_steps_converge() {
+        let mut price = 64_306_180_000u64;
+        let target = 63_657_000_000u64;
+        // A couple of ticks is all it takes to close a 1% gap.
+        for _ in 0..8 {
+            price = step_toward(price, target, BUDGET);
+        }
+        assert_eq!(price, target, "the mark must catch up, not creep forever");
+    }
+
+    #[test]
+    fn a_zero_stored_price_takes_the_target() {
+        // A freshly activated asset has nothing to step from.
+        assert_eq!(step_toward(0, 64_000_000_000, BUDGET), 64_000_000_000);
+    }
 }
