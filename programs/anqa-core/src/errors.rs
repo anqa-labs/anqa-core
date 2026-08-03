@@ -86,6 +86,8 @@ pub enum AnqaError {
     CloseUnfilled,
     #[msg("trigger price has not been reached")]
     TriggerNotArmed,
+    #[msg("asset slots account is not prepared to its full size")]
+    AssetSlotsNotPrepared,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

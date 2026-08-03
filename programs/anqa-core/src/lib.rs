@@ -43,6 +43,8 @@ pub mod anqa_core {
     pub fn initialize_market(
         ctx: Context<InitializeMarket>,
         market_id: u64,
+        group_id: u64,
+        asset_index: u32,
         tick_size: u64,
         base_lot_size: u64,
         base_decimals: u8,
@@ -55,6 +57,8 @@ pub mod anqa_core {
         instructions::initialize_market::handler(
             ctx,
             market_id,
+            group_id,
+            asset_index,
             tick_size,
             base_lot_size,
             base_decimals,
@@ -64,6 +68,56 @@ pub mod anqa_core {
             oracle_kind,
             oracle,
         )
+    }
+
+    /// Rollup: permissionless portfolio checkpoint to base — a commit is a
+    /// truthful snapshot and can only help the owner. Keeper slow tick.
+    pub fn checkpoint_portfolio(ctx: Context<CheckpointPortfolio>) -> Result<()> {
+        instructions::commit_portfolio::checkpoint_handler(ctx)
+    }
+
+    /// Rollup: checkpoint the risk group to base, keeping the rollup. The
+    /// keeper's slow tick — bounds what an unplanned undelegation can lose.
+    pub fn commit_risk_group(ctx: Context<UndelegateRiskGroup>) -> Result<()> {
+        instructions::undelegate_risk::commit_group_handler(ctx)
+    }
+
+    /// Rollup: checkpoint the slabs to base, keeping the rollup.
+    pub fn commit_asset_slots(ctx: Context<UndelegateAssetSlots>) -> Result<()> {
+        instructions::undelegate_risk::commit_slots_handler(ctx)
+    }
+
+    /// Rollup: commit the risk group and return it to base. Run this before
+    /// `undelegate_asset_slots`; see the module doc for why they're separate.
+    pub fn undelegate_risk_group(ctx: Context<UndelegateRiskGroup>) -> Result<()> {
+        instructions::undelegate_risk::group_handler(ctx)
+    }
+
+    /// Rollup: commit the slabs and return them to base — the second half of
+    /// bringing the risk engine home for base-layer maintenance
+    /// (`fund_insurance`) or escape.
+    pub fn undelegate_asset_slots(ctx: Context<UndelegateAssetSlots>) -> Result<()> {
+        instructions::undelegate_risk::slots_handler(ctx)
+    }
+
+    /// Base layer: create or grow the slabs' delegation buffer toward full
+    /// size, one 10KB step per transaction. Must reach full size before
+    /// `delegate_asset_slots` can run.
+    pub fn prepare_asset_slots_buffer(
+        ctx: Context<PrepareAssetSlotsBuffer>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::delegate_asset_slots::prepare_handler(ctx, market_id)
+    }
+
+    /// Base layer: create or grow the asset-slots account toward its full
+    /// size, one 10KB step per transaction. Must reach full size before
+    /// `initialize_risk` can run.
+    pub fn prepare_asset_slots(
+        ctx: Context<PrepareAssetSlots>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::prepare_asset_slots::handler(ctx, market_id)
     }
 
     /// Base layer: stand up the risk engine for a market group.
@@ -129,6 +183,16 @@ pub mod anqa_core {
         instructions::realize_pnl::handler(ctx)
     }
 
+    /// Rollup: liquidate a position against its OWN collateral — isolated
+    /// margin's enforcement. Permissionless; refuses while the position's own
+    /// margin survives. The account-level `liquidate` is the backstop.
+    pub fn liquidate_isolated<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ClosePosition<'info>>,
+        worst_price_in_ticks: u64,
+    ) -> Result<()> {
+        instructions::close_position::liquidate_isolated_handler(ctx, worst_price_in_ticks)
+    }
+
     /// Base layer: withdraw collateral. Requires a flat account — the kernel
     /// will not release funds out from under an open position.
     pub fn withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
@@ -176,6 +240,34 @@ pub mod anqa_core {
     /// never skip funding or hide losses. Permissionless.
     pub fn reanchor_oracle(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
         instructions::reanchor_oracle::handler(ctx, asset_index)
+    }
+
+    /// Activate one more asset in an existing group — cross-margin markets
+    /// after the first, each priced by its own oracle.
+    pub fn activate_asset(ctx: Context<ActivateAsset>) -> Result<()> {
+        instructions::activate_asset::handler(ctx)
+    }
+
+    /// Expire a lapsed source-backing bucket. Permissionless maintenance:
+    /// without it, one expired bucket wedges every refresh in its domain.
+    pub fn sweep_backing(ctx: Context<SweepBacking>, domain: u32) -> Result<()> {
+        instructions::sweep_backing::handler(ctx, domain)
+    }
+
+    /// Owner grants (or renews) a browser-held session key: one wallet
+    /// signature, then popup-free trading until expiry.
+    pub fn grant_session(
+        ctx: Context<GrantSession>,
+        session_key: Pubkey,
+        duration_secs: i64,
+    ) -> Result<()> {
+        instructions::grant_session::grant(ctx, session_key, duration_secs)
+    }
+
+    /// Owner kills the grant early. Base-layer, so it never depends on the
+    /// session key's cooperation.
+    pub fn revoke_session(ctx: Context<RevokeSession>) -> Result<()> {
+        instructions::grant_session::revoke(ctx)
     }
 
     /// Base layer: create the public fill tape — the one account in the dark
@@ -268,6 +360,7 @@ pub mod anqa_core {
         price_in_ticks: u64,
         base_lots: u64,
         client_order_id: u64,
+        collateral_usd: u128,
     ) -> Result<()> {
         instructions::place_order::handler(
             ctx,
@@ -276,6 +369,7 @@ pub mod anqa_core {
             price_in_ticks,
             base_lots,
             client_order_id,
+            collateral_usd,
         )
     }
 

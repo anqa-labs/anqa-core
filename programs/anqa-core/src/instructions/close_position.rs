@@ -17,11 +17,11 @@ use anchor_lang::prelude::*;
 use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut, TradeRequestV16, POS_SCALE};
 
 use crate::constants::{
-    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED, PORTFOLIO_SEED, RISK_GROUP_SEED,
+    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
 use crate::events::Fill;
-use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
+use crate::instructions::initialize_risk::{INITIAL_MARGIN_BPS, MAINTENANCE_MARGIN_BPS};
 use crate::state::{
     AssetSlots, Book, Market, OracleState, OrderType, Portfolio, RiskGroup, Side,
 };
@@ -35,6 +35,7 @@ pub struct PositionClosed {
 
 #[derive(Accounts)]
 pub struct ClosePosition<'info> {
+    /// The portfolio owner, or a session key the owner granted.
     pub trader: Signer<'info>,
 
     #[account(
@@ -43,13 +44,16 @@ pub struct ClosePosition<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Present when a session key signs for the owner; judged in the handler.
+    pub session: Option<Account<'info, crate::state::TradeSession>>,
+
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     #[account(seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
@@ -57,9 +61,7 @@ pub struct ClosePosition<'info> {
 
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
     // remaining_accounts: one `Portfolio` per maker this close may cross.
@@ -73,8 +75,110 @@ pub fn handler<'info>(
     worst_price_in_ticks: u64,
     max_base_lots: u64,
 ) -> Result<()> {
+    close_inner(ctx, worst_price_in_ticks, max_base_lots, false)
+}
+
+/// Isolated liquidation: close a position because **its own** collateral is
+/// spent, not because the account is unhealthy.
+///
+/// The kernel pools capital and liquidates per account, so on its own it lets
+/// one bad position eat everything the trader holds. Anqa records collateral
+/// per position (`Portfolio::asset_collateral`), and this is what enforces it:
+/// permissionless, refuses while the position's own margin survives, and
+/// closes only that position.
+///
+/// ```text
+///   margin = collateral + unrealised pnl of THIS position
+///   liquidatable when margin <= size x maintenance margin
+/// ```
+///
+/// The account's other markets never enter the arithmetic, which is what makes
+/// "you can only lose what is behind this position" true rather than displayed.
+/// The kernel's account-level `liquidate` remains the backstop beneath it.
+pub fn liquidate_isolated_handler<'info>(
+    ctx: Context<'_, '_, 'info, 'info, ClosePosition<'info>>,
+    worst_price_in_ticks: u64,
+) -> Result<()> {
     let market = &ctx.accounts.market;
-    let trader = ctx.accounts.trader.key();
+    let asset_index = market.asset_index;
+    let (is_long, size_q, collateral, entry) = {
+        let pf = ctx.accounts.portfolio.load()?;
+        let (is_long, size_q) = pf
+            .current_position(asset_index)
+            .ok_or(AnqaError::NoOpenPosition)?;
+        (is_long, size_q, pf.collateral_of(asset_index), pf.entry_of(asset_index))
+    };
+    // No recorded collateral means no isolated promise to enforce — the
+    // account-level liquidator owns that case.
+    require!(collateral > 0 && entry > 0, AnqaError::NotAdlEligible);
+
+    // `live_mark` refuses a stale price or a tripped breaker, so nobody can be
+    // liquidated on a number the venue does not currently trust.
+    let mark = ctx.accounts.oracle_state.live_mark(&market.oracle)? as u128;
+    let lots = size_q / POS_SCALE;
+    require!(
+        isolated_underwater(collateral, entry, mark, lots, is_long),
+        AnqaError::NotAdlEligible
+    );
+
+    msg!(
+        "anqa: isolated liquidation — asset {} spent its {} of collateral",
+        asset_index,
+        collateral
+    );
+    close_inner(ctx, worst_price_in_ticks, 0, true)
+}
+
+/// Has this position spent its own margin?
+///
+/// Pure so the keeper can mirror it exactly when deciding *when* to call, and
+/// so the arithmetic can be tested without a ledger.
+pub fn isolated_underwater(
+    collateral: u128,
+    entry_per_lot: u128,
+    mark_per_lot: u128,
+    lots: u128,
+    is_long: bool,
+) -> bool {
+    if lots == 0 {
+        return false;
+    }
+    let pnl: i128 = if is_long {
+        (mark_per_lot as i128 - entry_per_lot as i128) * lots as i128
+    } else {
+        (entry_per_lot as i128 - mark_per_lot as i128) * lots as i128
+    };
+    let margin = collateral as i128 + pnl;
+    let maintenance = mark_per_lot
+        .saturating_mul(lots)
+        .saturating_mul(MAINTENANCE_MARGIN_BPS as u128)
+        / 10_000u128;
+    margin <= maintenance as i128
+}
+
+fn close_inner<'info>(
+    ctx: Context<'_, '_, 'info, 'info, ClosePosition<'info>>,
+    worst_price_in_ticks: u64,
+    max_base_lots: u64,
+    liquidation: bool,
+) -> Result<()> {
+    let market = &ctx.accounts.market;
+    // Queue entries and self-cross checks speak the owner's key regardless
+    // of which key signed.
+    let trader = ctx.accounts.portfolio.load()?.owner;
+    // A liquidation is permissionless by design: it fires on a position whose
+    // own margin is gone, and closing it protects the trader's other markets
+    // as much as it protects the venue.
+    require!(
+        liquidation
+            || crate::state::trade_authorized(
+                trader,
+                market.market_id,
+                ctx.accounts.trader.key(),
+                ctx.accounts.session.as_ref(),
+            )?,
+        AnqaError::NotOrderOwner
+    );
     let asset_index = market.asset_index;
 
     // What is actually open? The book cannot answer this; only the kernel can.
@@ -154,6 +258,18 @@ pub fn handler<'info>(
         ctx.accounts.portfolio.load_mut()?.reserve(reserve);
 
         let queued: u64 = fills.iter().map(|f| f.base_lots).sum();
+        // Isolated margin: a full close frees the collateral that stood
+        // behind this position, back into the account's spendable equity.
+        if queued >= position_lots {
+            let released = ctx
+                .accounts
+                .portfolio
+                .load_mut()?
+                .take_collateral(market.asset_index);
+            if released > 0 {
+                msg!("anqa: released {} of isolated collateral", released);
+            }
+        }
         emit!(PositionClosed {
             market_id: market.market_id,
             base_lots_closed: queued,
@@ -190,7 +306,8 @@ pub fn handler<'info>(
                 .iter()
                 .find(|ai| {
                     AccountLoader::<Portfolio>::try_from(ai)
-                        .and_then(|l| l.load().map(|p| p.owner == f.maker))
+                        .and_then(|l| l.load().map(|p| p.owner == f.maker
+                            && p.market_id == ctx.accounts.market.market_id.to_le_bytes()))
                         .unwrap_or(false)
                 })
                 .ok_or(AnqaError::MakerPortfolioMissing)?;
@@ -265,6 +382,17 @@ pub fn handler<'info>(
             .clear_asset_triggers(asset_index as u8);
         if cleared > 0 {
             msg!("anqa: {} trigger(s) cleared with the position", cleared);
+        }
+    }
+
+    if closed_lots >= position_lots {
+        let released = ctx
+            .accounts
+            .portfolio
+            .load_mut()?
+            .take_collateral(market.asset_index);
+        if released > 0 {
+            msg!("anqa: released {} of isolated collateral", released);
         }
     }
 

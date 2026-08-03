@@ -20,7 +20,7 @@ use anchor_lang::prelude::*;
 use percolator::{MarketGroupV16ViewMut, PortfolioV16ViewMut, TradeRequestV16, POS_SCALE};
 
 use crate::constants::{
-    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED, PORTFOLIO_SEED,
+    ASSET_SLOTS_SEED, BOOK_SEED, MARKET_SEED, ORACLE_STATE_SEED,
     RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
@@ -32,6 +32,7 @@ use crate::state::{
 
 #[derive(Accounts)]
 pub struct PlaceOrder<'info> {
+    /// The portfolio owner, or a session key the owner granted.
     pub trader: Signer<'info>,
 
     #[account(
@@ -40,14 +41,19 @@ pub struct PlaceOrder<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Present when a session key signs for the owner. Lives on base and is
+    /// clone-read in the rollup, like the market config. Checked in the
+    /// handler via `trade_authorized`.
+    pub session: Option<Account<'info, crate::state::TradeSession>>,
+
     /// The order book. Delegated to the rollup in production.
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     /// Last accepted mark plus the circuit breaker. Read, never written, here:
@@ -55,12 +61,12 @@ pub struct PlaceOrder<'info> {
     #[account(seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub oracle_state: Account<'info, OracleState>,
 
-    /// The taker's margin account.
+    /// The taker's margin account. Bound to this market by its stored id;
+    /// ownership vs the signer is judged in the handler, because the signer
+    /// may be a session key rather than the owner the PDA is derived from.
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
     // remaining_accounts: one `Portfolio` per maker this order may cross.
@@ -73,11 +79,34 @@ pub fn handler<'info>(
     price_in_ticks: u64,
     base_lots: u64,
     client_order_id: u64,
+    collateral_usd: u128,
 ) -> Result<()> {
     let market = &ctx.accounts.market;
     require!(!market.paused, AnqaError::MarketPaused);
 
-    let trader_key = ctx.accounts.trader.key();
+    // Isolated margin: the trader states what stands behind this market's
+    // position, and that is the only money it can lose. The kernel pools
+    // capital, so the commitment is recorded here — free equity is what the
+    // account holds minus everything already committed across assets.
+    if collateral_usd > 0 {
+        let asset_index = market.asset_index;
+        let mut pf = ctx.accounts.portfolio.load_mut()?;
+        pf.add_collateral(asset_index, collateral_usd);
+    }
+
+    // The book, the queue and self-trade checks all speak the **owner's**
+    // key, never the session key's — a fill must settle against the same
+    // identity no matter which key signed the order.
+    let trader_key = ctx.accounts.portfolio.load()?.owner;
+    require!(
+        crate::state::trade_authorized(
+            trader_key,
+            market.market_id,
+            ctx.accounts.trader.key(),
+            ctx.accounts.session.as_ref(),
+        )?,
+        AnqaError::NotOrderOwner
+    );
     let market_id = market.market_id;
     let asset_index = market.asset_index as usize;
 
@@ -226,14 +255,17 @@ pub fn handler<'info>(
         let mut view =
             MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
 
+        let market_tag = ctx.accounts.market.market_id.to_le_bytes();
         for f in fills.iter() {
-            // Locate this maker's portfolio among the supplied accounts.
+            // Locate this maker's portfolio among the supplied accounts —
+            // owner AND market tag, so nobody can route a fill into a
+            // portfolio isolated to a different market.
             let maker_ai = ctx
                 .remaining_accounts
                 .iter()
                 .find(|ai| {
                     AccountLoader::<Portfolio>::try_from(ai)
-                        .and_then(|l| l.load().map(|p| p.owner == f.maker))
+                        .and_then(|l| l.load().map(|p| p.owner == f.maker && p.market_id == market_tag))
                         .unwrap_or(false)
                 })
                 .ok_or(AnqaError::MakerPortfolioMissing)?;
@@ -379,7 +411,8 @@ pub fn handler<'info>(
                 .iter()
                 .find(|ai| {
                     AccountLoader::<Portfolio>::try_from(ai)
-                        .and_then(|l| l.load().map(|p| p.owner == evicted.trader))
+                        .and_then(|l| l.load().map(|p| p.owner == evicted.trader
+                            && p.market_id == ctx.accounts.market.market_id.to_le_bytes()))
                         .unwrap_or(false)
                 })
                 .ok_or(AnqaError::EvictedPortfolioMissing)?;

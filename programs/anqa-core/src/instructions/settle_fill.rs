@@ -48,23 +48,31 @@ pub struct SettleFill<'info> {
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     #[account(seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub oracle_state: Account<'info, OracleState>,
 
-    /// The head fill's taker. Verified against the queue in the handler.
-    #[account(mut)]
+    /// The head fill's taker. Verified against the queue in the handler; the
+    /// tag pins it to THIS market's portfolio — isolated margin means a fill
+    /// may only ever draw on the collateral locked behind this market.
+    #[account(
+        mut,
+        constraint = taker_portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::WrongPendingFill
+    )]
     pub taker_portfolio: AccountLoader<'info, Portfolio>,
 
     /// The head fill's maker. Never the taker's account — self-trade
     /// prevention cancels self-crosses at match time, so a self pending fill
     /// cannot exist.
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = maker_portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::WrongPendingFill
+    )]
     pub maker_portfolio: AccountLoader<'info, Portfolio>,
 
     /// The public tape — the only account in the dark set the world reads.
@@ -171,6 +179,24 @@ pub fn handler(ctx: Context<SettleFill>) -> Result<()> {
         for loader in [&ctx.accounts.taker_portfolio, &ctx.accounts.maker_portfolio] {
             if loader.load()?.current_position(market.asset_index).is_none() {
                 loader.load_mut()?.clear_asset_triggers(market.asset_index as u8);
+            }
+        }
+
+        // Isolated margin: fold this fill into each side's blended entry, so
+        // a position's own unrealised PnL — and therefore its own liquidation
+        // price — can be computed without reading the kernel's internals.
+        {
+            let asset_index = market.asset_index;
+            let lots = fill.base_lots as u128;
+            for loader in [&ctx.accounts.taker_portfolio, &ctx.accounts.maker_portfolio] {
+                let prior = {
+                    let pf = loader.load()?;
+                    pf.current_position(asset_index).map(|(_, q)| q).unwrap_or(0)
+                        / percolator::POS_SCALE
+                };
+                loader
+                    .load_mut()?
+                    .blend_entry(asset_index, prior.saturating_sub(lots), lots, fill_price_quote as u128);
             }
         }
 
