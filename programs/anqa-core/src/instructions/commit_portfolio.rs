@@ -7,6 +7,33 @@ use ephemeral_rollups_sdk::ephem::{FoldableIntentBuilder, MagicIntentBundleBuild
 use crate::errors::AnqaError;
 use crate::state::Portfolio;
 
+/// Permissionless checkpoint: anyone may snapshot anyone's portfolio to
+/// base. A commit is a unilateral, truthful copy — it can only make the
+/// base-layer view (and thus `forced_exit`) fresher, never worse. The
+/// keeper runs this on its slow tick; `CommitPortfolio` below stays
+/// owner-gated because its sibling `undelegate_portfolio` ends a session.
+#[commit]
+#[derive(Accounts)]
+pub struct CheckpointPortfolio<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(mut)]
+    pub portfolio: AccountLoader<'info, Portfolio>,
+}
+
+pub fn checkpoint_handler(ctx: Context<CheckpointPortfolio>) -> Result<()> {
+    MagicIntentBundleBuilder::new(
+        ctx.accounts.payer.to_account_info(),
+        ctx.accounts.magic_context.to_account_info(),
+        ctx.accounts.magic_program.to_account_info(),
+    )
+    .commit(&[ctx.accounts.portfolio.to_account_info()])
+    .build_and_invoke()?;
+    msg!("anqa: portfolio checkpointed");
+    Ok(())
+}
+
 #[commit]
 #[derive(Accounts)]
 pub struct CommitPortfolio<'info> {
