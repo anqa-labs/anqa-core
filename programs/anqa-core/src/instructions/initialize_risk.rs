@@ -57,8 +57,13 @@ pub const MAX_ACCRUAL_DT_SLOTS: u64 = 100;
 pub const MAX_PRICE_MOVE_BPS_PER_SLOT: u64 = 1;
 
 pub fn anqa_risk_config(asset_count: u32) -> V16Config {
+    // Two different capacities: `max_market_slots` is how many assets the
+    // venue lists (this group's slot count); `max_portfolio_assets` is how
+    // many of them one trader may hold positions in at once, and the kernel
+    // hard-caps it at `V16_MAX_PORTFOLIO_ASSETS_N` (its legs are sparse —
+    // each records its asset index — so listings can exceed it).
     let mut cfg = V16Config::public_user_fund_with_market_slots(
-        asset_count as u16,
+        (percolator::V16_MAX_PORTFOLIO_ASSETS_N as u16).min(asset_count as u16),
         asset_count,
         0,
         10,
@@ -97,10 +102,12 @@ pub struct InitializeRisk<'info> {
     )]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
+    /// Pre-created and pre-sized by `prepare_asset_slots` — at `MAX_ASSETS`
+    /// slots the account exceeds the 10,240-byte CPI allocation limit, so it
+    /// cannot be `init`ed here. `zero` verifies it is program-owned and never
+    /// initialized; the seeds pin it to this group's PDA.
     #[account(
-        init,
-        payer = authority,
-        space = 8 + std::mem::size_of::<AssetSlots>(),
+        zero,
         seeds = [ASSET_SLOTS_SEED, &market_id.to_le_bytes()],
         bump
     )]
@@ -121,6 +128,13 @@ pub fn handler(
     require!(
         asset_count > 0 && asset_count as usize <= MAX_ASSETS,
         AnqaError::BadAssetIndex
+    );
+    // `zero` checked ownership and the untouched discriminator; the size is
+    // still `prepare_asset_slots`'s responsibility, so verify it got there.
+    require!(
+        ctx.accounts.asset_slots.to_account_info().data_len()
+            == 8 + std::mem::size_of::<AssetSlots>(),
+        AnqaError::AssetSlotsNotPrepared
     );
 
     let m = &ctx.accounts.market;
@@ -161,15 +175,13 @@ pub fn handler(
         );
     }
 
-    for i in 0..asset_count as usize {
+    // Only the first asset activates here: the kernel enforces a one-slot
+    // cooldown between activations, so the rest arrive via `activate_asset`
+    // in their own transactions — each priced by its own market's feed.
+    {
         let header = group.header_mut();
-        let engine = &mut slots.markets_mut()[i].engine;
-        map_risk(header.activate_empty_asset_slot_not_atomic(
-            i as u32,
-            engine,
-            opening_mark,
-            slot,
-        ))?;
+        let engine = &mut slots.markets_mut()[0].engine;
+        map_risk(header.activate_empty_asset_slot_not_atomic(0, engine, opening_mark, slot))?;
     }
 
     {

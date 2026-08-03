@@ -28,9 +28,8 @@ use anchor_lang::prelude::*;
 use percolator::{Market as PercMarket, MarketGroupV16HeaderAccount, PortfolioAccountV16Account};
 
 use super::trigger::TriggerDirection;
-use crate::constants::MAX_TRIGGERS_PER_PORTFOLIO;
+use crate::constants::{MAX_ASSETS, MAX_TRIGGERS_PER_PORTFOLIO};
 
-use crate::constants::MAX_ASSETS;
 
 /// Wrapper stored alongside each asset's engine state: the asset id, little-endian.
 pub type AssetTag = [u8; 8];
@@ -120,6 +119,27 @@ pub struct Portfolio {
     /// rollup never has to write anything on base layer to record that it
     /// claimed — which it could not do anyway.
     pub claimed_high_water: [u8; 8],
+    /// Collateral the trader chose to stand behind each asset's position, in
+    /// quote atoms, little-endian u128 per asset slot.
+    ///
+    /// The kernel pools capital at the account level — its legs carry size and
+    /// basis but no collateral of their own — so isolation per position has to
+    /// live here. This array is what makes "margin" on a position mean the
+    /// amount the trader put up rather than everything they hold, and what
+    /// `liquidate_isolated` measures a position's health against.
+    ///
+    /// Set when a fill opens a position, added to when one grows, released in
+    /// full on close or isolated liquidation.
+    pub asset_collateral: [[u8; 16]; MAX_ASSETS],
+    /// Size-weighted entry price for each asset's position, quote atoms per
+    /// lot, little-endian u128.
+    ///
+    /// Isolated liquidation needs a position's *own* unrealised PnL, which
+    /// means its own entry. The kernel's leg carries a basis in its internal
+    /// accounting units; rather than reinterpret those, anqa records the
+    /// blended fill price as positions are built. Zeroed with the collateral
+    /// when the position closes.
+    pub asset_entry: [[u8; 16]; MAX_ASSETS],
     pub inner: [u8; PORTFOLIO_BYTES],
     /// Trigger orders (stop-loss / take-profit) ride **inside** the portfolio
     /// so they delegate with it and fire inside the rollup, next to the book
@@ -208,6 +228,63 @@ impl Portfolio {
     }
     pub fn set_claimed(&mut self, v: u64) {
         self.claimed_high_water = v.to_le_bytes();
+    }
+
+    /// Blended entry for `asset_index`, quote atoms per lot.
+    pub fn entry_of(&self, asset_index: u32) -> u128 {
+        self.asset_entry
+            .get(asset_index as usize)
+            .map(|b| u128::from_le_bytes(*b))
+            .unwrap_or(0)
+    }
+
+    /// Fold `lots` filled at `price_per_lot` into the blended entry.
+    /// `prior_lots` is the position size before this fill.
+    pub fn blend_entry(&mut self, asset_index: u32, prior_lots: u128, lots: u128, price_per_lot: u128) {
+        if lots == 0 {
+            return;
+        }
+        let prior = self.entry_of(asset_index);
+        let blended = if prior == 0 || prior_lots == 0 {
+            price_per_lot
+        } else {
+            (prior.saturating_mul(prior_lots).saturating_add(price_per_lot.saturating_mul(lots)))
+                / prior_lots.saturating_add(lots)
+        };
+        if let Some(slot) = self.asset_entry.get_mut(asset_index as usize) {
+            *slot = blended.to_le_bytes();
+        }
+    }
+
+    /// Collateral standing behind `asset_index`, in quote atoms.
+    pub fn collateral_of(&self, asset_index: u32) -> u128 {
+        self.asset_collateral
+            .get(asset_index as usize)
+            .map(|b| u128::from_le_bytes(*b))
+            .unwrap_or(0)
+    }
+
+    /// Put `amount` more collateral behind `asset_index`.
+    pub fn add_collateral(&mut self, asset_index: u32, amount: u128) {
+        if let Some(slot) = self.asset_collateral.get_mut(asset_index as usize) {
+            *slot = u128::from_le_bytes(*slot).saturating_add(amount).to_le_bytes();
+        }
+    }
+
+    /// Release everything behind `asset_index` — the position is gone. Returns
+    /// what was released so the caller can credit it back.
+    pub fn take_collateral(&mut self, asset_index: u32) -> u128 {
+        match self.asset_collateral.get_mut(asset_index as usize) {
+            Some(slot) => {
+                let had = u128::from_le_bytes(*slot);
+                *slot = [0u8; 16];
+                if let Some(e) = self.asset_entry.get_mut(asset_index as usize) {
+                    *e = [0u8; 16];
+                }
+                had
+            }
+            None => 0,
+        }
     }
 
     pub fn reserved(&self) -> u128 {

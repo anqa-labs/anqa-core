@@ -23,14 +23,19 @@ pub const NIL: u16 = u16::MAX;
 /// compute-bounded regardless of book depth.
 pub const MAX_FILLS_PER_ORDER: usize = 8;
 
-/// Assets per risk group: BTC, ETH, SOL. Each is an isolated source domain in
-/// the risk kernel, so losses in one market cannot reach another's backing.
-pub const MAX_ASSETS: usize = 3;
+/// Asset capacity per risk group. Each is an isolated source domain in the
+/// risk kernel, so losses in one market cannot reach another's backing.
+///
+/// This sizes `AssetSlots` (~1.3KB per slot, delegated and committed), not
+/// portfolios — a trader's concurrent-position cap is the kernel's
+/// `V16_MAX_PORTFOLIO_ASSETS_N`. 12 leaves headroom over the 9 listed markets.
+pub const MAX_ASSETS: usize = 12;
 
 /// PDA seeds for the risk-engine accounts.
 pub const RISK_GROUP_SEED: &[u8] = b"anqa_risk";
 pub const ASSET_SLOTS_SEED: &[u8] = b"anqa_assets";
 pub const PORTFOLIO_SEED: &[u8] = b"anqa_portfolio";
+pub const SESSION_SEED: &[u8] = b"anqa_session";
 /// Base-layer record of a trader's deposits. Read from the rollup, never delegated.
 pub const LEDGER_SEED: &[u8] = b"anqa_ledger";
 pub const WITHDRAW_RECEIPT_SEED: &[u8] = b"anqa_wreceipt";

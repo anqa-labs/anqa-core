@@ -11,3 +11,7 @@ vendor/percolator/target
 
 # Demo venue keys and mints (devnet play money)
 app/.demo-*.json
+
+# Keeper and feed-pusher logs from the local demo venue
+app/.keeper-*.log
+app/.push-feed.log
