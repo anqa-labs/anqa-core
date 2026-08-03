@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "./ui";
 import { lotFraction } from "@/lib/anqa";
 import { MARKETS } from "@/lib/markets";
+import { MarketPicker } from "./MarketPicker";
 import { usePythLive } from "@/lib/usePyth";
 import { useTickFlash, useTweened } from "@/lib/useLive";
 import type { Anqa } from "@/lib/useAnqa";
@@ -95,12 +96,7 @@ export function MarketBar({
   );
 }
 
-/**
- * The market picker. A dropdown rather than a button strip — the listing set
- * outgrew the bar. The trigger shows where you are; the panel lists every
- * market the venue knows (from the registry, so listing a coin is one entry
- * in `markets.ts`).
- */
+/** The trigger. Shows where you are; the panel does the choosing. */
 function MarketSelect({
   current,
   onSelect,
@@ -109,87 +105,46 @@ function MarketSelect({
   onSelect: (id: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // The bar scrolls horizontally, and overflow on one axis clips the other —
-  // an absolute panel would be trapped inside its 56px. Fixed positioning
-  // escapes the clip; the trigger's rect anchors it.
-  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
-  const root = useRef<HTMLDivElement>(null);
   const selected = MARKETS.find((m) => m.id === current) ?? MARKETS[0];
 
-  const toggle = () => {
-    if (!open) {
-      const r = root.current?.getBoundingClientRect();
-      setAnchor(r ? { left: r.left, top: r.bottom + 6 } : null);
-    }
-    setOpen((v) => !v);
-  };
-
-  // Dismiss on outside click or Escape — the panel floats over the chart.
+  // "/" opens it from anywhere, the way a terminal does — unless the trader
+  // is already typing into something.
   useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      const el = e.target as HTMLElement | null;
+      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        setOpen(true);
+      }
     };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
-    <div ref={root} className="relative">
+    <>
       <button
-        onClick={toggle}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className={`h-8 pl-3 pr-2 flex items-center gap-2 bg-void border rounded-lg text-[13px] font-semibold transition-colors ${
-          open ? "border-line text-bright" : "border-line text-bright hover:bg-raised"
-        }`}
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        className="h-8 pl-3 pr-2 flex items-center gap-2 bg-void border border-line rounded-lg text-[13px] font-semibold text-bright hover:bg-raised transition-colors"
       >
         {selected.symbol}
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          className={`text-dim transition-transform ${open ? "rotate-180" : ""}`}
-        >
-          <path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <svg width="10" height="10" viewBox="0 0 10 10" className="text-dim">
+          <path
+            d="M2 3.5 L5 6.5 L8 3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </button>
-
-      {open && anchor && (
-        <div
-          role="listbox"
-          style={{ left: anchor.left, top: anchor.top }}
-          className="fixed z-50 min-w-[180px] max-h-[60vh] overflow-y-auto p-1 bg-ink border border-line rounded-lg shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
-        >
-          {MARKETS.map((m) => (
-            <button
-              key={m.id}
-              role="option"
-              aria-selected={m.id === current}
-              onClick={() => {
-                onSelect(m.id);
-                setOpen(false);
-              }}
-              className={`w-full flex items-center justify-between gap-3 h-8 px-2.5 rounded-md text-[12px] font-semibold transition-colors ${
-                m.id === current
-                  ? "bg-raised text-bright shadow-[inset_0_0_0_1px_var(--color-phoenix-soft)]"
-                  : "text-dim hover:text-text hover:bg-raised"
-              }`}
-            >
-              <span>{m.symbol}</span>
-              <span className="text-[10px] font-normal text-dim">{m.base}</span>
-            </button>
-          ))}
-        </div>
+      {open && (
+        <MarketPicker current={current} onSelect={onSelect} onClose={() => setOpen(false)} />
       )}
-    </div>
+    </>
   );
 }
 
