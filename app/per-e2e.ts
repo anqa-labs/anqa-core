@@ -41,12 +41,19 @@ import {
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { resolveFeedAccount, resolveFeedCandidates } from "./feed";
 
 const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const ACL = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
-const BTC_FEED_HEX = "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43";
-const BTC_FEED = new PublicKey("4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo");
+// Defaults are BTC/USD; SOL and ETH markets pass their own feed via env.
+const BTC_FEED_HEX =
+  process.env.ANQA_FEED_HEX ?? "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43";
+const BTC_FEED = new PublicKey(
+  process.env.ANQA_FEED_ACCT && process.env.ANQA_FEED_ACCT !== "auto"
+    ? process.env.ANQA_FEED_ACCT
+    : "4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo"
+);
 
 const BASE_RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
 const TEE_TOKEN = process.env.ANQA_TEE_TOKEN;
@@ -55,8 +62,10 @@ const ER_RPC = TEE_TOKEN
   : process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
 
 const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? Date.now() % 1_000_000);
-const TICK = 100_000;
+const TICK = Number(process.env.ANQA_TICK ?? 1_000); // quote atoms per tick
 const DEC = 6;
+const LOT_SIZE = Number(process.env.ANQA_LOT_SIZE ?? 100_000); // base units per lot
+const BASE_DECIMALS = Number(process.env.ANQA_BASE_DECIMALS ?? 8);
 const COLLATERAL = 500_000 * 10 ** DEC;
 const LOTS = 10;
 const WITHDRAW = 100_000 * 10 ** DEC;
@@ -102,6 +111,28 @@ async function main() {
   // In production a dedicated key inside the TEE; here, the payer.
   const engine = payer;
 
+  const feed = () => resolveFeedAccount(base, BTC_FEED_HEX, BTC_FEED.toBase58());
+  /** Transient feed accounts (ETH) can close before a tx lands. Scan once
+   *  per round, then verify-and-fire down the candidate list — preflight
+   *  fails fast on a dead account and we move to the next. */
+  const withFeed = async (fn: (acct: PublicKey) => Promise<any>) => {
+    let last: any = new Error("no feed candidates");
+    for (let round = 0; round < 3; round++) {
+      const auto = process.env.ANQA_FEED_ACCT === "auto";
+      const cands = auto
+        ? await resolveFeedCandidates(base, BTC_FEED_HEX)
+        : [await feed()];
+      for (const acct of cands) {
+        try {
+          return await fn(acct);
+        } catch (e) {
+          last = e;
+        }
+      }
+    }
+    throw last;
+  };
+
   console.log("\n════ ANQA GOES DARK (PER flow) ════");
   console.log(`base ${BASE_RPC}`);
   console.log(`ER   ${TEE_TOKEN ? "devnet-tee (TEE, token set)" : ER_RPC}`);
@@ -145,13 +176,15 @@ async function main() {
     maxMarkStalenessSlots: new BN(100_000),
   };
   await pBase.methods
-    .initializeMarket(MARKET_ID, new BN(TICK), new BN(1), 8, DEC, 0, 0, { pyth: {} }, oracleParams)
+    .initializeMarket(MARKET_ID, new BN(TICK), new BN(LOT_SIZE), BASE_DECIMALS, DEC, 0, 0, { pyth: {} }, oracleParams)
     .accounts({ authority: payer.publicKey, market, book, oracleState, systemProgram: SystemProgram.programId })
     .rpc(); await sleep(PACE);
-  await pBase.methods
-    .initializeRisk(MARKET_ID, 1)
-    .accounts({ authority: payer.publicKey, market, riskGroup, assetSlots, priceUpdate: BTC_FEED, systemProgram: SystemProgram.programId })
-    .rpc(); await sleep(PACE);
+  await withFeed((acct) =>
+    pBase.methods
+      .initializeRisk(MARKET_ID, 1)
+      .accounts({ authority: payer.publicKey, market, riskGroup, assetSlots, priceUpdate: acct, systemProgram: SystemProgram.programId })
+      .rpc()
+  ); await sleep(PACE);
   // Persist the mint so the terminal (and its faucet) can find it later.
   const mintFile = `app/.demo-mint-${MARKET_ID}.json`;
   const mint = fs.existsSync(mintFile)
@@ -166,10 +199,12 @@ async function main() {
     .initializeTape(MARKET_ID)
     .accounts({ authority: payer.publicKey, market, tape, systemProgram: SystemProgram.programId })
     .rpc(); await sleep(PACE);
-  await pBase.methods
-    .syncInternalOracle()
-    .accounts({ keeper: payer.publicKey, market, internalOracle, priceUpdate: BTC_FEED, systemProgram: SystemProgram.programId })
-    .rpc(); await sleep(PACE);
+  await withFeed((acct) =>
+    pBase.methods
+      .syncInternalOracle()
+      .accounts({ keeper: payer.publicKey, market, internalOracle, priceUpdate: acct, systemProgram: SystemProgram.programId })
+      .rpc()
+  ); await sleep(PACE);
   await pBase.methods
     .setDark(true)
     .accounts({ authority: payer.publicKey, market, book })
@@ -278,9 +313,11 @@ async function main() {
       receipt: null, magicContext: null, magicProgram: null,
     }).rpc(); await sleep(PACE);
   }
-  await pEr.methods.syncInternalOracle().accounts({
-    keeper: payer.publicKey, market, internalOracle, priceUpdate: BTC_FEED, systemProgram: SystemProgram.programId,
-  }).rpc().catch(() => {}); await sleep(PACE);
+  await withFeed((acct) =>
+    pEr.methods.syncInternalOracle().accounts({
+      keeper: payer.publicKey, market, internalOracle, priceUpdate: acct, systemProgram: SystemProgram.programId,
+    }).rpc()
+  ).catch(() => {}); await sleep(PACE);
   await pEr.methods.reanchorOracle(0).accounts({
     cranker: payer.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle,
   }).rpc(); await sleep(PACE);
@@ -296,13 +333,13 @@ async function main() {
   console.log("\n[ER: hidden trade]");
   await pEr.methods
     .placeOrder({ ask: {} }, { limit: {} }, new BN(markTicks), new BN(LOTS), new BN(1))
-    .accounts({ trader: maker.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.maker.pf })
+    .accounts({ trader: maker.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.maker.pf })
     .signers([maker])
     .rpc(); await sleep(PACE);
   // The taker names NO maker accounts — it cannot see the book.
   await pEr.methods
     .placeOrder({ bid: {} }, { limit: {} }, new BN(markTicks), new BN(LOTS), new BN(2))
-    .accounts({ trader: payer.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
+    .accounts({ trader: payer.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
     .rpc(); await sleep(PACE);
   let bk: any = await pEr.account.book.fetch(book);
   check(Number(bk.pendingCount) === 1, "hidden cross QUEUED, not settled", "the taker named no counterparty");
@@ -326,12 +363,12 @@ async function main() {
   console.log("\n[ER: dark close]");
   await pEr.methods
     .placeOrder({ bid: {} }, { limit: {} }, new BN(markTicks), new BN(LOTS), new BN(3))
-    .accounts({ trader: maker.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.maker.pf })
+    .accounts({ trader: maker.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.maker.pf })
     .signers([maker])
     .rpc(); await sleep(PACE);
   await pEr.methods
     .closePosition(new BN(Math.floor(markTicks * 0.96)), new BN(0))
-    .accounts({ trader: payer.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
+    .accounts({ trader: payer.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
     .rpc(); await sleep(PACE);
   await pEr.methods.settleFill().accounts({
     caller: engine.publicKey, market, book, riskGroup, assetSlots, oracleState,
@@ -342,7 +379,7 @@ async function main() {
   try {
     await pEr.methods
       .closePosition(new BN(Math.floor(markTicks * 0.96)), new BN(0))
-      .accounts({ trader: payer.publicKey, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
+      .accounts({ trader: payer.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio: acct.taker.pf })
       .rpc();
   } catch (_) { flat = true; }
   check(Number(tp.count) === 2 && flat, "dark close settled; taker flat", `print #2 on the tape`);
