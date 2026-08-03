@@ -52,10 +52,10 @@ pub struct AuthorizeWithdraw<'info> {
     )]
     pub market: Account<'info, Market>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     /// The portfolio. Bound to the receipt's owner in the handler, since the
@@ -71,8 +71,11 @@ pub struct AuthorizeWithdraw<'info> {
 }
 
 pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
-    let market_id = ctx.accounts.market.market_id;
+    // Receipts and the ledger are group-scoped; the portfolio is
+    // market-scoped (isolated margin).
+    let market_id = ctx.accounts.market.group_id;
     let market_id_bytes = market_id.to_le_bytes();
+    let portfolio_market_bytes = ctx.accounts.market.market_id.to_le_bytes();
 
     let mut receipt: WithdrawReceipt = {
         let data = ctx.accounts.receipt.try_borrow_data()?;
@@ -81,12 +84,12 @@ pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
     // The receipt names its owner; verify this account *is* that owner's
     // receipt, and that the portfolio is that owner's portfolio.
     let (expected_receipt, _) = Pubkey::find_program_address(
-        &[WITHDRAW_RECEIPT_SEED, &market_id_bytes, receipt.owner.as_ref()],
+        &[WITHDRAW_RECEIPT_SEED, &portfolio_market_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
     require_keys_eq!(ctx.accounts.receipt.key(), expected_receipt, AnqaError::NotOrderOwner);
     let (expected_portfolio, _) = Pubkey::find_program_address(
-        &[PORTFOLIO_SEED, &market_id_bytes, receipt.owner.as_ref()],
+        &[PORTFOLIO_SEED, &portfolio_market_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
     require_keys_eq!(
@@ -147,6 +150,7 @@ pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
         ctx.accounts.market.key(),
         ctx.accounts.receipt.key(),
         &receipt,
+        &portfolio_market_bytes,
         &market_id_bytes,
     );
     MagicIntentBundleBuilder::new(
@@ -177,13 +181,15 @@ fn build_settle_action<'info>(
     market: Pubkey,
     receipt_key: Pubkey,
     receipt: &WithdrawReceipt,
-    market_id_bytes: &[u8; 8],
+    // Isolated margin: the ledger is market-scoped, custody stays hub-wide.
+    ledger_market_bytes: &[u8; 8],
+    vault_group_bytes: &[u8; 8],
 ) -> CallHandler<'info> {
     let (ledger, _) = Pubkey::find_program_address(
-        &[LEDGER_SEED, market_id_bytes, receipt.owner.as_ref()],
+        &[LEDGER_SEED, ledger_market_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
-    let (vault, _) = Pubkey::find_program_address(&[VAULT_SEED, market_id_bytes], &crate::ID);
+    let (vault, _) = Pubkey::find_program_address(&[VAULT_SEED, vault_group_bytes], &crate::ID);
     let mut metas = __client_accounts_settle_withdraw::SettleWithdraw {
         market,
         ledger,

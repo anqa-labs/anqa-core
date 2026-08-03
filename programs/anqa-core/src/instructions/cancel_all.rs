@@ -8,7 +8,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{BOOK_SEED, MARKET_SEED, PORTFOLIO_SEED};
+use crate::constants::{BOOK_SEED, MARKET_SEED};
 use crate::errors::AnqaError;
 use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
 use crate::state::{Book, Market, Portfolio, Side};
@@ -29,14 +29,15 @@ pub struct CancelBulk<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Present when a session key signs for the owner; judged in the handler.
+    pub session: Option<Account<'info, crate::state::TradeSession>>,
+
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
 }
@@ -66,7 +67,17 @@ pub(crate) fn release_margin(
 /// Deliberately allowed while the market is paused: a pause must never trap a
 /// trader's orders or the margin they hold.
 pub fn handler(ctx: Context<CancelBulk>) -> Result<()> {
-    let trader = ctx.accounts.trader.key();
+    // Book entries are keyed by the owner, whichever key signed.
+    let trader = ctx.accounts.portfolio.load()?.owner;
+    require!(
+        crate::state::trade_authorized(
+            trader,
+            ctx.accounts.market.market_id,
+            ctx.accounts.trader.key(),
+            ctx.accounts.session.as_ref(),
+        )?,
+        AnqaError::NotOrderOwner
+    );
     let (count, price_x_lots) = {
         let mut book = ctx.accounts.book.load_mut()?;
         let (nb, fb) = book.bids.cancel_matching(&trader, Side::Bid, None);

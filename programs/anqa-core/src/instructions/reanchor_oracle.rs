@@ -45,10 +45,10 @@ pub struct ReanchorOracle<'info> {
     )]
     pub market: Account<'info, Market>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     #[account(mut, seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
@@ -77,7 +77,7 @@ pub fn handler(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
         &market.oracle,
         primary,
         None,
-        market.quote_decimals,
+        market,
     )?;
 
     let slot = Clock::get()?.slot;

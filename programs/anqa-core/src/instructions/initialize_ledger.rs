@@ -26,7 +26,7 @@ pub struct InitializeLedger<'info> {
         init,
         payer = trader,
         space = 8 + UserDepositLedger::INIT_SPACE,
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump
     )]
     pub ledger: Account<'info, UserDepositLedger>,
@@ -44,7 +44,7 @@ pub struct InitializeLedger<'info> {
 pub fn handler(ctx: Context<InitializeLedger>) -> Result<()> {
     let l = &mut ctx.accounts.ledger;
     l.owner = ctx.accounts.trader.key();
-    l.market_id = ctx.accounts.market.market_id;
+    l.market_id = ctx.accounts.market.group_id;
     l.deposited = 0;
     l.withdrawn = 0;
     l.reserved = 0;

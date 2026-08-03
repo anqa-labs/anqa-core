@@ -54,7 +54,7 @@ pub struct RequestWithdraw<'info> {
 
     #[account(
         mut,
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump = ledger.bump,
         constraint = ledger.owner == trader.key() @ AnqaError::NotOrderOwner
     )]
@@ -69,7 +69,7 @@ pub struct RequestWithdraw<'info> {
     /// then delegated to the rollup. Seeds bind it to this trader and market.
     #[account(
         mut,
-        seeds = [WITHDRAW_RECEIPT_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [WITHDRAW_RECEIPT_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump
     )]
     pub receipt: AccountInfo<'info>,
@@ -107,6 +107,10 @@ pub fn handler(
     let reserved = ctx.accounts.ledger.reserve(amount);
     require!(reserved > 0, AnqaError::NothingToClaim);
 
+    // Isolated margin: ledger, receipt and portfolio are scoped to THIS
+    // market. Only the risk-engine derivations inside the queued authorize
+    // (built below from the group id) stay hub-wide.
+    let group_id = ctx.accounts.market.group_id;
     let market_id = ctx.accounts.market.market_id;
     let trader = ctx.accounts.trader.key();
 
@@ -148,7 +152,7 @@ pub fn handler(
     };
 
     if queue_authorize {
-        let authorize_ix = build_authorize_ix(&ctx, market_id, trader);
+        let authorize_ix = build_authorize_ix(&ctx, group_id, trader);
         delegate_account_with_actions(
             delegate_accounts,
             receipt_seeds,
@@ -244,8 +248,14 @@ fn build_authorize_ix(
         Pubkey::find_program_address(&[RISK_GROUP_SEED, &market_id_bytes], &crate::ID);
     let (asset_slots, _) =
         Pubkey::find_program_address(&[ASSET_SLOTS_SEED, &market_id_bytes], &crate::ID);
+    // Isolated margin: the withdrawal is judged against THIS market's
+    // portfolio — the only pot this market's positions can draw on.
     let (portfolio, _) = Pubkey::find_program_address(
-        &[PORTFOLIO_SEED, &market_id_bytes, trader.as_ref()],
+        &[
+            PORTFOLIO_SEED,
+            &ctx.accounts.market.market_id.to_le_bytes(),
+            trader.as_ref(),
+        ],
         &crate::ID,
     );
     let metas = __client_accounts_authorize_withdraw::AuthorizeWithdraw {

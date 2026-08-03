@@ -64,7 +64,7 @@ pub struct Deposit<'info> {
     /// record, not something a deposit conjures into being.
     #[account(
         mut,
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump = ledger.bump,
         constraint = ledger.owner == trader.key() @ AnqaError::NotOrderOwner
     )]
@@ -78,7 +78,7 @@ pub struct Deposit<'info> {
     /// rollup, so collateral stays outside the enclave's trust boundary.
     #[account(
         mut,
-        seeds = [VAULT_SEED, &market.market_id.to_le_bytes()],
+        seeds = [VAULT_SEED, &market.group_id.to_le_bytes()],
         bump
     )]
     pub vault: Box<Account<'info, TokenAccount>>,
@@ -87,7 +87,7 @@ pub struct Deposit<'info> {
     /// handler when `queue_claim` is set; untouched otherwise.
     #[account(
         mut,
-        seeds = [DEPOSIT_RECEIPT_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [DEPOSIT_RECEIPT_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump
     )]
     pub receipt: AccountInfo<'info>,
@@ -132,6 +132,11 @@ pub fn handler(ctx: Context<Deposit>, amount: u64, queue_claim: bool) -> Result<
     // 2. Record it on the ledger — the permanent, monotonic source of truth.
     ctx.accounts.ledger.credit_deposit(amount)?;
 
+    // Isolated margin: the ledger, receipt and portfolio are all scoped to
+    // THIS market — a deposit is collateral for one market's positions only.
+    // Only the risk engine derivations inside the queued claim (built below
+    // from the group id) stay hub-wide.
+    let group_id = ctx.accounts.market.group_id;
     let market_id = ctx.accounts.market.market_id;
     let trader = ctx.accounts.trader.key();
 
@@ -174,7 +179,7 @@ pub fn handler(ctx: Context<Deposit>, amount: u64, queue_claim: bool) -> Result<
             },
             receipt_seeds,
             delegate_config(),
-            vec![build_claim_ix(&ctx, market_id, trader)].cleartext(),
+            vec![build_claim_ix(&ctx, group_id, trader)].cleartext(),
             &[&trader_info],
         )?;
     }
@@ -264,7 +269,13 @@ fn build_claim_ix(ctx: &Context<Deposit>, market_id: u64, trader: Pubkey) -> Dlp
         market: ctx.accounts.market.key(),
         risk_group: derive(&[RISK_GROUP_SEED, &market_id_bytes]),
         asset_slots: derive(&[ASSET_SLOTS_SEED, &market_id_bytes]),
-        portfolio: derive(&[PORTFOLIO_SEED, &market_id_bytes, trader.as_ref()]),
+        // Isolated margin: the claim credits THIS market's portfolio, not a
+        // group-wide one — the deposit is collateral for this market alone.
+        portfolio: derive(&[
+            PORTFOLIO_SEED,
+            &ctx.accounts.market.market_id.to_le_bytes(),
+            trader.as_ref(),
+        ]),
         ledger: ctx.accounts.ledger.key(),
         receipt: Some(ctx.accounts.receipt.key()),
         magic_context: Some(MAGIC_CONTEXT_ID),

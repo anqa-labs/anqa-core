@@ -13,7 +13,8 @@
 //! What makes delegation workable is that **`sync_internal_oracle` runs inside
 //! the rollup too** — Pyth's price account is itself clone-readable there, so
 //! the keeper refreshes the relay from within, against the same verified feed.
-//! Verified on devnet: publish time advances on an ER-side sync.
+//! Verified on devnet: publish time advances on an ER-side syn
+//! c.
 
 use anchor_lang::prelude::*;
 use ephemeral_rollups_sdk::anchor::delegate;

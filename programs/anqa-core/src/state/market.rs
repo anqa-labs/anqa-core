@@ -18,6 +18,10 @@ use anchor_lang::prelude::*;
 pub struct Market {
     /// Stable identifier, also the PDA seed.
     pub market_id: u64,
+    /// The margin hub this market settles against. Every market in a group
+    /// shares one vault, one risk engine and one portfolio per trader —
+    /// cross-margin. Group-scoped PDAs are seeded by this, not `market_id`.
+    pub group_id: u64,
     /// Admin authority (multisig in production).
     pub authority: Pubkey,
     /// Price increment, quoted in quote atoms per base lot.

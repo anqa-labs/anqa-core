@@ -9,13 +9,24 @@
 
 use anchor_lang::prelude::*;
 
+use crate::errors::AnqaError;
 use crate::instructions::cancel_all::{release_margin, CancelBulk, OrdersCancelled};
 use crate::state::Side;
 
 /// Pull this trader's orders on `side` that are at or more aggressive than
 /// `price_in_ticks`, leaving the passive remainder working.
 pub fn handler(ctx: Context<CancelBulk>, side: Side, price_in_ticks: u64) -> Result<()> {
-    let trader = ctx.accounts.trader.key();
+    // Book entries are keyed by the owner, whichever key signed.
+    let trader = ctx.accounts.portfolio.load()?.owner;
+    require!(
+        crate::state::trade_authorized(
+            trader,
+            ctx.accounts.market.market_id,
+            ctx.accounts.trader.key(),
+            ctx.accounts.session.as_ref(),
+        )?,
+        AnqaError::NotOrderOwner
+    );
     let (count, price_x_lots) = {
         let mut book = ctx.accounts.book.load_mut()?;
         book.side_mut(side)

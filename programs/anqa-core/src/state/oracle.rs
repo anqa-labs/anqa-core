@@ -280,24 +280,52 @@ fn deviation_bps(a: u64, b: u64) -> Result<u64> {
         / a as u128) as u64)
 }
 
+/// Rescale a per-whole-asset price (quote atoms) to a per-**lot** price.
+///
+/// The book quotes and sizes in lots, so the mark it is banded against must be
+/// per lot too. Oracles publish the price of one whole asset; a lot is
+/// `base_lot_size / 10^base_decimals` of one. Doing this in the accept path —
+/// the one audited place — is what lets a market define an affordable minimum
+/// increment (0.001 BTC) while the oracle keeps speaking whole bitcoins.
+fn to_per_lot(price_per_whole: u64, base_lot_size: u64, base_decimals: u8) -> Result<u64> {
+    let denom = 10u128
+        .checked_pow(base_decimals as u32)
+        .ok_or(AnqaError::MathOverflow)?;
+    let scaled = (price_per_whole as u128)
+        .checked_mul(base_lot_size as u128)
+        .ok_or(AnqaError::MathOverflow)?
+        / denom;
+    let out = u64::try_from(scaled).map_err(|_| AnqaError::MathOverflow)?;
+    require!(out > 0, AnqaError::OracleUnavailable);
+    Ok(out)
+}
+
 /// The full pipeline: validate, cross-check, band-check, commit.
 ///
-/// Returns the accepted mark in quote atoms. On a band or deviation breach the
-/// breaker trips and the call fails — the caller should retry on the next tick
-/// rather than force a mark through.
+/// Returns the accepted mark in quote atoms **per base lot**. On a band or
+/// deviation breach the breaker trips and the call fails — the caller should
+/// retry on the next tick rather than force a mark through.
 pub fn accept_mark(
     state: &mut OracleState,
     params: &OracleParams,
     primary: OraclePrice,
     secondary: Option<OraclePrice>,
-    quote_decimals: u8,
+    market: &crate::state::Market,
 ) -> Result<u64> {
     let slot = Clock::get()?.slot;
-    let price = primary.to_quote_atoms(quote_decimals)?;
+    let price = to_per_lot(
+        primary.to_quote_atoms(market.quote_decimals)?,
+        market.base_lot_size,
+        market.base_decimals,
+    )?;
 
     // Cross-source agreement.
     if let Some(sec) = secondary {
-        let sec_price = sec.to_quote_atoms(quote_decimals)?;
+        let sec_price = to_per_lot(
+            sec.to_quote_atoms(market.quote_decimals)?,
+            market.base_lot_size,
+            market.base_decimals,
+        )?;
         let dev = deviation_bps(price, sec_price)?;
         if dev > params.max_deviation_bps as u64 {
             state.trip(slot, params.freeze_slots, "source deviation");

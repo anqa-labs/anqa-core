@@ -55,7 +55,11 @@ pub struct FireTriggerOrder<'info> {
 
     /// The owner's portfolio, which carries the trigger slots. The trigger
     /// must not be consumable unless there is a position for it to act on.
-    #[account(mut)]
+    /// The tag pins it to this market — isolated portfolios never cross.
+    #[account(
+        mut,
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
+    )]
     pub portfolio: AccountLoader<'info, Portfolio>,
 }
 

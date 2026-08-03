@@ -48,7 +48,7 @@ pub struct ModifyOrder<'info> {
 
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [PORTFOLIO_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump,
         constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
     )]

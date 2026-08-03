@@ -29,7 +29,7 @@ pub struct CloseDepositReceipt<'info> {
     #[account(
         mut,
         close = owner,
-        seeds = [DEPOSIT_RECEIPT_SEED, &market.market_id.to_le_bytes(), receipt.owner.as_ref()],
+        seeds = [DEPOSIT_RECEIPT_SEED, &market.group_id.to_le_bytes(), receipt.owner.as_ref()],
         bump = receipt.bump
     )]
     pub receipt: Account<'info, DepositReceipt>,

@@ -5,7 +5,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{BOOK_SEED, MARKET_SEED, PORTFOLIO_SEED};
+use crate::constants::{BOOK_SEED, MARKET_SEED};
 use crate::errors::AnqaError;
 use crate::instructions::initialize_risk::INITIAL_MARGIN_BPS;
 use crate::events::OrderCancelled;
@@ -13,6 +13,7 @@ use crate::state::{Book, Market, Portfolio, Side};
 
 #[derive(Accounts)]
 pub struct CancelOrder<'info> {
+    /// The portfolio owner, or a session key the owner granted.
     pub trader: Signer<'info>,
 
     #[account(
@@ -21,21 +22,32 @@ pub struct CancelOrder<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Present when a session key signs for the owner; judged in the handler.
+    pub session: Option<Account<'info, crate::state::TradeSession>>,
+
     /// Zero-copy; see `state::book`.
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
 }
 
 pub fn handler(ctx: Context<CancelOrder>, side: Side, client_order_id: u64) -> Result<()> {
-    let trader_key = ctx.accounts.trader.key();
+    // Book entries are keyed by the owner, whichever key signed.
+    let trader_key = ctx.accounts.portfolio.load()?.owner;
+    require!(
+        crate::state::trade_authorized(
+            trader_key,
+            ctx.accounts.market.market_id,
+            ctx.accounts.trader.key(),
+            ctx.accounts.session.as_ref(),
+        )?,
+        AnqaError::NotOrderOwner
+    );
 
     let (price_in_ticks, base_lots) = {
         let mut book = ctx.accounts.book.load_mut()?;

@@ -2,7 +2,7 @@
 
 use anchor_lang::prelude::*;
 
-use crate::constants::{MARKET_SEED, PORTFOLIO_SEED};
+use crate::constants::MARKET_SEED;
 use crate::errors::AnqaError;
 use crate::state::{Market, Portfolio};
 
@@ -16,16 +16,26 @@ pub struct CancelTriggerOrder<'info> {
     )]
     pub market: Account<'info, Market>,
 
+    /// Present when a session key signs for the owner; judged in the handler.
+    pub session: Option<Account<'info, crate::state::TradeSession>>,
+
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
-        bump,
-        constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
+        constraint = portfolio.load()?.market_id == market.group_id.to_le_bytes() @ AnqaError::NotOrderOwner
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
 }
 
 pub fn handler(ctx: Context<CancelTriggerOrder>, trigger_id: u64) -> Result<()> {
+    require!(
+        crate::state::trade_authorized(
+            ctx.accounts.portfolio.load()?.owner,
+            ctx.accounts.market.market_id,
+            ctx.accounts.trader.key(),
+            ctx.accounts.session.as_ref(),
+        )?,
+        AnqaError::NotOrderOwner
+    );
     let mut pf = ctx.accounts.portfolio.load_mut()?;
     let slot = pf
         .find_trigger(trigger_id)

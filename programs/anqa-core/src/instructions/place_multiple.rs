@@ -48,10 +48,10 @@ pub struct PlaceMultiple<'info> {
     #[account(mut, seeds = [BOOK_SEED, &market.market_id.to_le_bytes()], bump)]
     pub book: AccountLoader<'info, Book>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     #[account(seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
@@ -59,7 +59,7 @@ pub struct PlaceMultiple<'info> {
 
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [PORTFOLIO_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump,
         constraint = portfolio.load()?.owner == trader.key() @ AnqaError::NotOrderOwner
     )]

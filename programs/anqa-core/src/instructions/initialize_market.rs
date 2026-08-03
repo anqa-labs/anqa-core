@@ -46,6 +46,8 @@ pub struct InitializeMarket<'info> {
 pub fn handler(
     ctx: Context<InitializeMarket>,
     market_id: u64,
+    group_id: u64,
+    asset_index: u32,
     tick_size: u64,
     base_lot_size: u64,
     base_decimals: u8,
@@ -57,8 +59,13 @@ pub fn handler(
 ) -> Result<()> {
     require!(tick_size > 0 && base_lot_size > 0, AnqaError::InvalidTickSize);
 
+    require!(
+        (asset_index as usize) < crate::constants::MAX_ASSETS,
+        AnqaError::BadAssetIndex
+    );
     let market = &mut ctx.accounts.market;
     market.market_id = market_id;
+    market.group_id = group_id;
     market.authority = ctx.accounts.authority.key();
     market.tick_size = tick_size;
     market.base_lot_size = base_lot_size;
@@ -68,7 +75,7 @@ pub fn handler(
     market.maker_rebate_bps = maker_rebate_bps;
     market.paused = false;
     market.dark = false;
-    market.asset_index = 0;
+    market.asset_index = asset_index;
     market.oracle = oracle;
     market.oracle_kind = oracle_kind;
     market.bump = ctx.bumps.market;

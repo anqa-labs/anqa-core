@@ -51,16 +51,16 @@ pub struct ClaimDeposit<'info> {
     )]
     pub market: Account<'info, Market>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     /// The portfolio. Delegated to the rollup when this runs there.
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), ledger.owner.as_ref()],
+        seeds = [PORTFOLIO_SEED, &market.group_id.to_le_bytes(), ledger.owner.as_ref()],
         bump,
         constraint = portfolio.load()?.owner == ledger.owner @ AnqaError::NotOrderOwner
     )]
@@ -69,7 +69,7 @@ pub struct ClaimDeposit<'info> {
     /// Base-layer ledger. **Read only** — the rollup cannot write it, which is
     /// exactly why the high-water mark lives in the portfolio instead.
     #[account(
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), ledger.owner.as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), ledger.owner.as_ref()],
         bump = ledger.bump
     )]
     pub ledger: Account<'info, UserDepositLedger>,
@@ -90,6 +90,8 @@ pub struct ClaimDeposit<'info> {
 }
 
 pub fn handler(ctx: Context<ClaimDeposit>) -> Result<()> {
+    // Isolated margin: this market's ledger feeds this market's portfolio,
+    // 1:1 — the high-water mark below cannot double-claim across markets.
     let market_id = ctx.accounts.market.market_id;
     let deposited = ctx.accounts.ledger.deposited;
     let claimed = ctx.accounts.portfolio.load()?.claimed();

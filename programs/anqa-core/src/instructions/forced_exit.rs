@@ -62,17 +62,17 @@ pub struct ForceExit<'info> {
     )]
     pub market: Account<'info, Market>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     /// Must be program-owned, i.e. committed and undelegated — Anchor's owner
     /// check is the whole "against last committed state" guarantee.
     #[account(
         mut,
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), portfolio.load()?.owner.as_ref()],
+        seeds = [PORTFOLIO_SEED, &market.group_id.to_le_bytes(), portfolio.load()?.owner.as_ref()],
         bump
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
@@ -86,7 +86,7 @@ pub struct ForceExit<'info> {
 
     #[account(
         mut,
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), portfolio.load()?.owner.as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), portfolio.load()?.owner.as_ref()],
         bump = ledger.bump
     )]
     pub ledger: Account<'info, UserDepositLedger>,
@@ -99,14 +99,15 @@ pub struct ForceExit<'info> {
     )]
     pub payout_to: Box<Account<'info, TokenAccount>>,
 
-    #[account(mut, seeds = [VAULT_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [VAULT_SEED, &market.group_id.to_le_bytes()], bump)]
     pub vault: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
 }
 
 pub fn handler(ctx: Context<ForceExit>) -> Result<()> {
-    let market_id = ctx.accounts.market.market_id;
+    // The custody vault is group-scoped; its signer seeds must match.
+    let market_id = ctx.accounts.market.group_id;
     let owner = ctx.accounts.portfolio.load()?.owner;
 
     require!(

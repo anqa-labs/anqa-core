@@ -41,10 +41,10 @@ pub struct Crank<'info> {
     )]
     pub market: Account<'info, Market>,
 
-    #[account(mut, seeds = [RISK_GROUP_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [RISK_GROUP_SEED, &market.group_id.to_le_bytes()], bump)]
     pub risk_group: AccountLoader<'info, RiskGroup>,
 
-    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
 
     #[account(mut, seeds = [ORACLE_STATE_SEED, &market.market_id.to_le_bytes()], bump)]
@@ -76,7 +76,7 @@ pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> 
         &market.oracle,
         primary,
         secondary,
-        market.quote_decimals,
+        market,
     )?;
     let ema = ctx.accounts.oracle_state.ema_price;
 
@@ -99,6 +99,14 @@ pub fn handler(ctx: Context<Crank>, asset_index: u32, funding_rate_e9: i128) -> 
 
     let mut view =
         MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+
+    // Publish the fresh mark as the asset's **raw oracle target** before
+    // accruing toward it. The kernel refuses every risk-increasing trade
+    // while `effective_price != raw_oracle_target_price`, and nothing else
+    // updates the target — skip this and the first mark move after an anchor
+    // freezes new positions forever, which is exactly what happened on
+    // devnet market 802.
+    map_risk(view.set_asset_raw_oracle_target_not_atomic(asset_index as usize, mark_price))?;
 
     map_risk(view.accrue_asset_to_not_atomic(
         asset_index as usize,

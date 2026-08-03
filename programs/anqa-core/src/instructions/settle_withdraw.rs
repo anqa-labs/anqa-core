@@ -32,7 +32,7 @@ pub struct SettleWithdraw<'info> {
 
     #[account(
         mut,
-        seeds = [LEDGER_SEED, &market.market_id.to_le_bytes(), receipt.owner.as_ref()],
+        seeds = [LEDGER_SEED, &market.group_id.to_le_bytes(), receipt.owner.as_ref()],
         bump = ledger.bump
     )]
     pub ledger: Account<'info, UserDepositLedger>,
@@ -42,7 +42,7 @@ pub struct SettleWithdraw<'info> {
     #[account(
         mut,
         close = owner,
-        seeds = [WITHDRAW_RECEIPT_SEED, &market.market_id.to_le_bytes(), receipt.owner.as_ref()],
+        seeds = [WITHDRAW_RECEIPT_SEED, &market.group_id.to_le_bytes(), receipt.owner.as_ref()],
         bump = receipt.bump
     )]
     pub receipt: Account<'info, WithdrawReceipt>,
@@ -56,7 +56,7 @@ pub struct SettleWithdraw<'info> {
     #[account(mut, address = receipt.payout_to @ AnqaError::NotOrderOwner)]
     pub payout_to: Box<Account<'info, TokenAccount>>,
 
-    #[account(mut, seeds = [VAULT_SEED, &market.market_id.to_le_bytes()], bump)]
+    #[account(mut, seeds = [VAULT_SEED, &market.group_id.to_le_bytes()], bump)]
     pub vault: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
@@ -79,7 +79,7 @@ pub fn handler(ctx: Context<SettleWithdraw>) -> Result<()> {
     ctx.accounts.ledger.settle(reserved, paid)?;
 
     if paid > 0 {
-        let market_id_bytes = ctx.accounts.market.market_id.to_le_bytes();
+        let market_id_bytes = ctx.accounts.market.group_id.to_le_bytes();
         let seeds: &[&[u8]] = &[VAULT_SEED, &market_id_bytes, &[ctx.bumps.vault]];
         token::transfer(
             CpiContext::new_with_signer(

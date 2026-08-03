@@ -1,9 +1,13 @@
-//! Open a margin account.
+//! Open a margin account — one per trader **per market**.
 //!
-//! This is the perps counterpart to a spot venue's token accounts. A trader's
-//! portfolio holds collateral, positions and PnL; the kernel walks exactly one
-//! portfolio per operation, never a global table, which is what keeps margin
-//! checks and liquidation cranks compute-bounded.
+//! This is what makes the venue isolated-margin: each market's portfolio has
+//! its own capital, its own PnL and its own health cert, and the kernel walks
+//! exactly one portfolio per operation. A position can only ever lose the
+//! collateral deposited into its own portfolio — the trader's other markets
+//! (and wallet) are structurally out of reach, not merely policy-protected.
+//!
+//! The kernel still keys every portfolio to the **group** (its provenance and
+//! risk accounting are hub-wide); only ownership of collateral is per-market.
 
 use anchor_lang::prelude::*;
 use percolator::{ProvenanceHeaderV16, ProvenanceHeaderV16Account};
@@ -27,7 +31,7 @@ pub struct OpenPortfolio<'info> {
         init,
         payer = trader,
         space = 8 + std::mem::size_of::<Portfolio>(),
-        seeds = [PORTFOLIO_SEED, &market.market_id.to_le_bytes(), trader.key().as_ref()],
+        seeds = [PORTFOLIO_SEED, &market.group_id.to_le_bytes(), trader.key().as_ref()],
         bump
     )]
     pub portfolio: AccountLoader<'info, Portfolio>,
@@ -36,6 +40,13 @@ pub struct OpenPortfolio<'info> {
 }
 
 pub fn handler(ctx: Context<OpenPortfolio>) -> Result<()> {
+    // Isolated margin: one portfolio per (trader, MARKET). The wrapper tag
+    // carries the market id — every trading instruction compares it against
+    // its market, so a BTC portfolio physically cannot margin a SOL order.
+    // The kernel provenance stays group-keyed (risk accounting is hub-wide),
+    // with the market mixed into the account seed so no two of a trader's
+    // portfolios are kernel-interchangeable either.
+    let group = ctx.accounts.market.group_id;
     let market_id = ctx.accounts.market.market_id;
     let trader = ctx.accounts.trader.key();
 
@@ -47,9 +58,14 @@ pub fn handler(ctx: Context<OpenPortfolio>) -> Result<()> {
     // The kernel stamps its own provenance so an account can never be replayed
     // against a different market group or owner.
     let mut group_id = [0u8; 32];
-    group_id[..8].copy_from_slice(&market_id.to_le_bytes());
+    group_id[..8].copy_from_slice(&group.to_le_bytes());
     let mut account_seed = [0u8; 32];
     account_seed.copy_from_slice(trader.as_ref());
+    // Namespace the seed by market: same owner, distinct kernel identity per
+    // market portfolio.
+    for (i, b) in market_id.to_le_bytes().iter().enumerate() {
+        account_seed[24 + i] ^= b;
+    }
 
     let provenance = ProvenanceHeaderV16Account::from_runtime(&ProvenanceHeaderV16::new(
         group_id,
@@ -64,6 +80,6 @@ pub fn handler(ctx: Context<OpenPortfolio>) -> Result<()> {
     // in place instead.
     map_risk(portfolio.account_mut().init_empty_in_place(provenance))?;
 
-    msg!("anqa: portfolio opened on market {}", market_id);
+    msg!("anqa: isolated portfolio opened for market {} (group {})", market_id, group);
     Ok(())
 }
