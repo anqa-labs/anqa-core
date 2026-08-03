@@ -8,6 +8,120 @@
   },
   "instructions": [
     {
+      "name": "activate_asset",
+      "docs": [
+        "Activate one more asset in an existing group — cross-margin markets",
+        "after the first, each priced by its own oracle."
+      ],
+      "discriminator": [
+        157,
+        189,
+        77,
+        194,
+        202,
+        69,
+        103,
+        52
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "risk_group",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "price_update"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "adl",
       "docs": [
         "Auto-deleverage a profitable position — layer 4, reached only when",
@@ -81,7 +195,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -110,7 +224,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -211,7 +325,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -240,7 +354,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -324,6 +438,13 @@
           }
         },
         {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
+        },
+        {
           "name": "book",
           "writable": true,
           "pda": {
@@ -352,39 +473,7 @@
         },
         {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": []
@@ -407,6 +496,9 @@
       "accounts": [
         {
           "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
           "signer": true
         },
         {
@@ -436,6 +528,13 @@
               }
             ]
           }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
         },
         {
           "name": "book",
@@ -469,39 +568,7 @@
         },
         {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -568,40 +635,15 @@
           }
         },
         {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
+        },
+        {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -661,6 +703,13 @@
           }
         },
         {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
+        },
+        {
           "name": "book",
           "writable": true,
           "pda": {
@@ -689,39 +738,7 @@
         },
         {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -738,6 +755,44 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "checkpoint_portfolio",
+      "docs": [
+        "Rollup: permissionless portfolio checkpoint to base — a commit is a",
+        "truthful snapshot and can only help the owner. Keeper slow tick."
+      ],
+      "discriminator": [
+        202,
+        88,
+        231,
+        78,
+        149,
+        107,
+        162,
+        216
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "portfolio",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "claim_deposit",
@@ -813,7 +868,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -842,7 +897,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -877,7 +932,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -914,7 +969,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -1021,7 +1076,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -1067,6 +1122,9 @@
       "accounts": [
         {
           "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
           "signer": true
         },
         {
@@ -1096,6 +1154,13 @@
               }
             ]
           }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
         },
         {
           "name": "book",
@@ -1145,7 +1210,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -1174,7 +1239,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -1210,39 +1275,7 @@
         },
         {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -1430,6 +1463,43 @@
       "args": []
     },
     {
+      "name": "commit_asset_slots",
+      "docs": [
+        "Rollup: checkpoint the slabs to base, keeping the rollup."
+      ],
+      "discriminator": [
+        96,
+        229,
+        223,
+        179,
+        139,
+        215,
+        173,
+        168
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "asset_slots",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "commit_book",
       "docs": [
         "Rollup: checkpoint book state to base chain."
@@ -1492,6 +1562,44 @@
         },
         {
           "name": "portfolio",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "commit_risk_group",
+      "docs": [
+        "Rollup: checkpoint the risk group to base, keeping the rollup. The",
+        "keeper's slow tick — bounds what an unplanned undelegation can lose."
+      ],
+      "discriminator": [
+        197,
+        193,
+        193,
+        218,
+        218,
+        16,
+        202,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "risk_group",
           "writable": true
         },
         {
@@ -1580,7 +1688,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -1609,7 +1717,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -1941,137 +2049,6 @@
           "signer": true
         },
         {
-          "name": "buffer_asset_slots",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  98,
-                  117,
-                  102,
-                  102,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "asset_slots"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                57,
-                251,
-                5,
-                35,
-                107,
-                160,
-                114,
-                152,
-                75,
-                225,
-                111,
-                190,
-                235,
-                239,
-                12,
-                50,
-                63,
-                167,
-                42,
-                8,
-                239,
-                38,
-                174,
-                34,
-                7,
-                244,
-                227,
-                176,
-                245,
-                163,
-                36,
-                104
-              ]
-            }
-          }
-        },
-        {
-          "name": "delegation_record_asset_slots",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  108,
-                  101,
-                  103,
-                  97,
-                  116,
-                  105,
-                  111,
-                  110
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "asset_slots"
-              }
-            ],
-            "program": {
-              "kind": "account",
-              "path": "delegation_program"
-            }
-          }
-        },
-        {
-          "name": "delegation_metadata_asset_slots",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  108,
-                  101,
-                  103,
-                  97,
-                  116,
-                  105,
-                  111,
-                  110,
-                  45,
-                  109,
-                  101,
-                  116,
-                  97,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "asset_slots"
-              }
-            ],
-            "program": {
-              "kind": "account",
-              "path": "delegation_program"
-            }
-          }
-        },
-        {
           "name": "asset_slots",
           "writable": true,
           "pda": {
@@ -2100,12 +2077,44 @@
           }
         },
         {
-          "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "name": "buffer_asset_slots",
+          "docs": [
+            "payer once the delegation program has consumed the snapshot."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_slots"
+              }
+            ]
+          }
         },
         {
-          "name": "delegation_program",
-          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+          "name": "delegation_record_asset_slots",
+          "writable": true
+        },
+        {
+          "name": "delegation_metadata_asset_slots",
+          "writable": true
+        },
+        {
+          "name": "owner_program"
+        },
+        {
+          "name": "delegation_program"
         },
         {
           "name": "system_program",
@@ -3589,7 +3598,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -3632,7 +3641,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -3666,7 +3675,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -3801,7 +3810,8 @@
           "name": "portfolio",
           "docs": [
             "The owner's portfolio, which carries the trigger slots. The trigger",
-            "must not be consumable unless there is a position for it to act on."
+            "must not be consumable unless there is a position for it to act on.",
+            "The tag pins it to this market — isolated portfolios never cross."
           ],
           "writable": true
         }
@@ -3887,7 +3897,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -3916,7 +3926,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -3952,7 +3962,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -4017,7 +4027,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -4057,7 +4067,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -4144,7 +4154,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -4173,7 +4183,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -4232,6 +4242,76 @@
         {
           "name": "short_amount",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "grant_session",
+      "docs": [
+        "Owner grants (or renews) a browser-held session key: one wallet",
+        "signature, then popup-free trading until expiry."
+      ],
+      "discriminator": [
+        205,
+        196,
+        56,
+        227,
+        18,
+        85,
+        212,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Platform-wide: one grant per owner, honoured by every market."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "session_key",
+          "type": "pubkey"
+        },
+        {
+          "name": "duration_secs",
+          "type": "i64"
         }
       ]
     },
@@ -4417,7 +4497,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -4549,6 +4629,14 @@
         {
           "name": "market_id",
           "type": "u64"
+        },
+        {
+          "name": "group_id",
+          "type": "u64"
+        },
+        {
+          "name": "asset_index",
+          "type": "u32"
         },
         {
           "name": "tick_size",
@@ -4821,6 +4909,12 @@
         },
         {
           "name": "asset_slots",
+          "docs": [
+            "Pre-created and pre-sized by `prepare_asset_slots` — at `MAX_ASSETS`",
+            "slots the account exceeds the 10,240-byte CPI allocation limit, so it",
+            "cannot be `init`ed here. `zero` verifies it is program-owned and never",
+            "initialized; the seeds pin it to this group's PDA."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -5136,7 +5230,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5165,7 +5259,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5183,6 +5277,189 @@
         {
           "name": "asset_index",
           "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "liquidate_isolated",
+      "docs": [
+        "Rollup: liquidate a position against its OWN collateral — isolated",
+        "margin's enforcement. Permissionless; refuses while the position's own",
+        "margin survives. The account-level `liquidate` is the backstop."
+      ],
+      "discriminator": [
+        37,
+        213,
+        22,
+        85,
+        93,
+        187,
+        225,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
+        },
+        {
+          "name": "book",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  98,
+                  111,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "risk_group",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "portfolio",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "worst_price_in_ticks",
+          "type": "u64"
         }
       ]
     },
@@ -5317,7 +5594,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -5426,7 +5703,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -5539,7 +5816,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5568,7 +5845,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5628,7 +5905,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -5673,6 +5950,9 @@
       "accounts": [
         {
           "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
           "signer": true
         },
         {
@@ -5702,6 +5982,15 @@
               }
             ]
           }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner. Lives on base and is",
+            "clone-read in the rollup, like the market config. Checked in the",
+            "handler via `trade_authorized`."
+          ],
+          "optional": true
         },
         {
           "name": "book",
@@ -5754,7 +6043,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5783,7 +6072,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -5824,41 +6113,11 @@
         {
           "name": "portfolio",
           "docs": [
-            "The taker's margin account."
+            "The taker's margin account. Bound to this market by its stored id;",
+            "ownership vs the signer is judged in the handler, because the signer",
+            "may be a session key rather than the owner the PDA is derived from."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -5889,6 +6148,10 @@
         {
           "name": "client_order_id",
           "type": "u64"
+        },
+        {
+          "name": "collateral_usd",
+          "type": "u128"
         }
       ]
     },
@@ -5942,40 +6205,15 @@
           }
         },
         {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner; judged in the handler."
+          ],
+          "optional": true
+        },
+        {
           "name": "portfolio",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  110,
-                  113,
-                  97,
-                  95,
-                  112,
-                  111,
-                  114,
-                  116,
-                  102,
-                  111,
-                  108,
-                  105,
-                  111
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "market.market_id",
-                "account": "Market"
-              },
-              {
-                "kind": "account",
-                "path": "trader"
-              }
-            ]
-          }
+          "writable": true
         }
       ],
       "args": [
@@ -6001,6 +6239,190 @@
         },
         {
           "name": "max_base_lots",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "prepare_asset_slots",
+      "docs": [
+        "Base layer: create or grow the asset-slots account toward its full",
+        "size, one 10KB step per transaction. Must reach full size before",
+        "`initialize_risk` can run."
+      ],
+      "discriminator": [
+        140,
+        231,
+        245,
+        181,
+        52,
+        200,
+        104,
+        44
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "docs": [
+            "then adopted by `initialize_risk` under its `zero` constraint."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "prepare_asset_slots_buffer",
+      "docs": [
+        "Base layer: create or grow the slabs' delegation buffer toward full",
+        "size, one 10KB step per transaction. Must reach full size before",
+        "`delegate_asset_slots` can run."
+      ],
+      "discriminator": [
+        68,
+        3,
+        169,
+        162,
+        99,
+        242,
+        31,
+        41
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "asset_slots",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buffer_asset_slots",
+          "docs": [
+            "transactions and consumed by `delegate_asset_slots`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_slots"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
           "type": "u64"
         }
       ]
@@ -6185,7 +6607,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6214,7 +6636,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6301,7 +6723,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6330,7 +6752,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6473,7 +6895,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6502,7 +6924,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6589,7 +7011,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -6635,7 +7057,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -6680,6 +7102,60 @@
           "type": "bool"
         }
       ]
+    },
+    {
+      "name": "revoke_session",
+      "docs": [
+        "Owner kills the grant early. Base-layer, so it never depends on the",
+        "session key's cooperation."
+      ],
+      "discriminator": [
+        86,
+        92,
+        198,
+        120,
+        144,
+        2,
+        7,
+        194
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
     },
     {
       "name": "set_dark",
@@ -6872,7 +7348,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6901,7 +7377,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -6938,7 +7414,9 @@
         {
           "name": "taker_portfolio",
           "docs": [
-            "The head fill's taker. Verified against the queue in the handler."
+            "The head fill's taker. Verified against the queue in the handler; the",
+            "tag pins it to THIS market's portfolio — isolated margin means a fill",
+            "may only ever draw on the collateral locked behind this market."
           ],
           "writable": true
         },
@@ -7052,7 +7530,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -7092,7 +7570,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -7137,7 +7615,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -7155,6 +7633,122 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "sweep_backing",
+      "docs": [
+        "Expire a lapsed source-backing bucket. Permissionless maintenance:",
+        "without it, one expired bucket wedges every refresh in its domain."
+      ],
+      "discriminator": [
+        228,
+        26,
+        96,
+        110,
+        143,
+        169,
+        223,
+        82
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone; the keeper in practice."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "risk_group",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "domain",
+          "type": "u32"
+        }
+      ]
     },
     {
       "name": "sync_internal_oracle",
@@ -7258,6 +7852,45 @@
       "args": []
     },
     {
+      "name": "undelegate_asset_slots",
+      "docs": [
+        "Rollup: commit the slabs and return them to base — the second half of",
+        "bringing the risk engine home for base-layer maintenance",
+        "(`fund_insurance`) or escape."
+      ],
+      "discriminator": [
+        83,
+        237,
+        33,
+        55,
+        230,
+        106,
+        72,
+        8
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "asset_slots",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "undelegate_portfolio",
       "docs": [
         "Commit and return the portfolio to base layer."
@@ -7280,6 +7913,44 @@
         },
         {
           "name": "portfolio",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "undelegate_risk_group",
+      "docs": [
+        "Rollup: commit the risk group and return it to base. Run this before",
+        "`undelegate_asset_slots`; see the module doc for why they're separate."
+      ],
+      "discriminator": [
+        237,
+        171,
+        29,
+        154,
+        87,
+        0,
+        133,
+        253
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "risk_group",
           "writable": true
         },
         {
@@ -7364,7 +8035,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -7393,7 +8064,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -7425,7 +8096,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               },
               {
@@ -7461,7 +8132,7 @@
               },
               {
                 "kind": "account",
-                "path": "market.market_id",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -7622,6 +8293,19 @@
         226,
         195,
         19
+      ]
+    },
+    {
+      "name": "TradeSession",
+      "discriminator": [
+        43,
+        20,
+        111,
+        188,
+        176,
+        148,
+        140,
+        69
       ]
     },
     {
@@ -8144,6 +8828,11 @@
       "code": 6040,
       "name": "TriggerNotArmed",
       "msg": "trigger price has not been reached"
+    },
+    {
+      "code": 6041,
+      "name": "AssetSlotsNotPrepared",
+      "msg": "asset slots account is not prepared to its full size"
     }
   ],
   "types": [
@@ -8169,7 +8858,7 @@
             "type": {
               "array": [
                 "u8",
-                3879
+                15516
               ]
             }
           }
@@ -8745,6 +9434,15 @@
             "type": "u64"
           },
           {
+            "name": "group_id",
+            "docs": [
+              "The margin hub this market settles against. Every market in a group",
+              "shares one vault, one risk engine and one portfolio per trader —",
+              "cross-margin. Group-scoped PDAs are seeded by this, not `market_id`."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "authority",
             "docs": [
               "Admin authority (multisig in production)."
@@ -9308,6 +10006,57 @@
             }
           },
           {
+            "name": "asset_collateral",
+            "docs": [
+              "Collateral the trader chose to stand behind each asset's position, in",
+              "quote atoms, little-endian u128 per asset slot.",
+              "",
+              "The kernel pools capital at the account level — its legs carry size and",
+              "basis but no collateral of their own — so isolation per position has to",
+              "live here. This array is what makes \"margin\" on a position mean the",
+              "amount the trader put up rather than everything they hold, and what",
+              "`liquidate_isolated` measures a position's health against.",
+              "",
+              "Set when a fill opens a position, added to when one grows, released in",
+              "full on close or isolated liquidation."
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    16
+                  ]
+                },
+                12
+              ]
+            }
+          },
+          {
+            "name": "asset_entry",
+            "docs": [
+              "Size-weighted entry price for each asset's position, quote atoms per",
+              "lot, little-endian u128.",
+              "",
+              "Isolated liquidation needs a position's *own* unrealised PnL, which",
+              "means its own entry. The kernel's leg carries a basis in its internal",
+              "accounting units; rather than reinterpret those, anqa records the",
+              "blended fill price as positions are built. Zeroed with the collateral",
+              "when the position closes."
+            ],
+            "type": {
+              "array": [
+                {
+                  "array": [
+                    "u8",
+                    16
+                  ]
+                },
+                12
+              ]
+            }
+          },
+          {
             "name": "inner",
             "type": {
               "array": [
@@ -9734,6 +10483,53 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeSession",
+      "docs": [
+        "An owner's standing grant to one ephemeral key — **platform-wide**.",
+        "",
+        "The grant names a trader, not a market: one signature arms one-click",
+        "trading across every market the owner holds an account on. Scope comes",
+        "from what the key may *do* (trade only), not from where."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "docs": [
+              "The portfolio owner who granted the session."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "market_id",
+            "docs": [
+              "Unused since grants went platform-wide; kept for layout stability."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "session_key",
+            "docs": [
+              "The ephemeral key allowed to sign trading instructions."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "expires_at",
+            "docs": [
+              "Unix time after which the grant is dead. Re-grant to extend."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

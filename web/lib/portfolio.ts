@@ -11,6 +11,31 @@
  * silently rendering the wrong number onto somebody's screen.
  */
 
+/** Wrapper header: disc + owner + market tag + bump + reserved + high water. */
+export const PF_HEADER = 8 + 32 + 8 + 1 + 16 + 8;
+/** Isolated margin adds two per-asset arrays before the kernel bytes. */
+export const PF_MAX_ASSETS = 12;
+export const PF_COLLATERAL = PF_HEADER;
+export const PF_ENTRY = PF_COLLATERAL + PF_MAX_ASSETS * 16;
+/** Where the kernel's own bytes start inside a raw portfolio account. */
+export const PF_INNER = PF_ENTRY + PF_MAX_ASSETS * 16;
+
+/** Collateral the trader put behind `assetIndex`, in USD. */
+export function collateralOfRaw(data: Uint8Array, assetIndex: number): number {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const at = PF_COLLATERAL + assetIndex * 16;
+  if (at + 8 > data.length) return 0;
+  return Number(view.getBigUint64(at, true)) / 1e6;
+}
+
+/** Blended entry for `assetIndex`, quote atoms per lot. */
+export function entryOfRaw(data: Uint8Array, assetIndex: number): number {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const at = PF_ENTRY + assetIndex * 16;
+  if (at + 8 > data.length) return 0;
+  return Number(view.getBigUint64(at, true)) / 1e6;
+}
+
 const CAPITAL = 132; // u128 LE
 const PNL = 148; // i128 LE
 const LEGS = 340;
@@ -110,10 +135,34 @@ export function readOpenInterest(data: Uint8Array): string | null {
   return (oiQ / POS_SCALE).toString();
 }
 
+/**
+ * Equity, preferring the kernel's own certificate but never trusting it blindly.
+ *
+ * The health cert is a **cache**, not a running total. The kernel stamps it
+ * during a refresh and it goes stale the moment the crank advances an epoch —
+ * and on an account that has deposited but never traded it has simply never
+ * been written, so it reads as zero.
+ *
+ * Reading that zero as "you have no equity" is how a funded account came to
+ * show $0.00 free margin. Capital plus unrealised PnL is what the kernel would
+ * certify anyway, so fall back to it rather than reporting a cache miss as
+ * poverty. On-chain nothing depended on this: `place_order` refreshes the
+ * account itself before it checks margin.
+ */
+export function equity(k: KernelState): bigint {
+  return k.certValid && k.certifiedEquity > 0n ? k.certifiedEquity : k.capital + k.pnl;
+}
+
+/** True when the number above came from the fallback rather than the kernel. */
+export function equityIsEstimated(k: KernelState): boolean {
+  return !(k.certValid && k.certifiedEquity > 0n);
+}
+
 /** Free collateral: equity minus what positions and resting orders hold. */
 export function freeMargin(k: KernelState, reservedByOrders: bigint): bigint {
-  if (k.certifiedEquity <= 0n) return 0n;
+  const eq = equity(k);
+  if (eq <= 0n) return 0n;
   const committed = k.initialRequirement + reservedByOrders;
-  const free = k.certifiedEquity - committed;
+  const free = eq - committed;
   return free > 0n ? free : 0n;
 }

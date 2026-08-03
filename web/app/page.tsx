@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_MARKET_ID, MARKETS } from "@/lib/markets";
 import { Header } from "@/components/Header";
+import { DepositModal } from "@/components/DepositModal";
 import { MarketBar } from "@/components/MarketBar";
 import { Chart } from "@/components/Chart";
 import { OrderBook } from "@/components/OrderBook";
@@ -9,6 +11,8 @@ import { TradeForm } from "@/components/TradeForm";
 import { BottomTabs } from "@/components/BottomTabs";
 import { ProofPanel } from "@/components/ProofPanel";
 import { useAnqa } from "@/lib/useAnqa";
+import { lotFraction, ticksToUsd } from "@/lib/anqa";
+import { useTweened } from "@/lib/useLive";
 
 type Toast = { id: number; msg: string; err?: boolean };
 
@@ -23,8 +27,19 @@ type Toast = { id: number; msg: string; err?: boolean };
  * panels in the wrong columns as soon as a row-span was involved.
  */
 export default function Terminal() {
-  const anqa = useAnqa();
+  const [mid, setMid] = useState<number>(DEFAULT_MARKET_ID);
+  // Remember the trader's market across visits.
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("anqa-market"));
+    if (MARKETS.some((m) => m.id === saved)) setMid(saved);
+  }, []);
+  const selectMarket = useCallback((id: number) => {
+    setMid(id);
+    window.localStorage.setItem("anqa-market", String(id));
+  }, []);
+  const anqa = useAnqa(mid);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [depositOpen, setDepositOpen] = useState(false);
 
   const notify = useCallback((msg: string, err = false) => {
     const id = Date.now() + Math.random();
@@ -34,8 +49,8 @@ export default function Terminal() {
 
   return (
     <div className="flex flex-col h-dvh">
-      <Header anqa={anqa} />
-      <MarketBar anqa={anqa} />
+      <Header anqa={anqa} onDeposit={() => setDepositOpen(true)} />
+      <MarketBar anqa={anqa} onSelectMarket={selectMarket} />
 
       {anqa.error && (
         <div className="shrink-0 px-4 py-1.5 bg-ask/10 border-b border-ask/25 text-[11px] text-ask">
@@ -51,26 +66,32 @@ export default function Terminal() {
       >
         {/* A real floor, not just min-h-0: stacked on a narrow window the
             chart would otherwise collapse to nothing. */}
-        <div className="min-h-[440px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
+        <div className="rise-in enter-1 min-h-[440px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
           <Chart anqa={anqa} />
         </div>
 
-        <div className="min-h-[320px] lg:min-h-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
+        <div className="rise-in enter-2 min-h-[320px] lg:min-h-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
           <OrderBook anqa={anqa} />
         </div>
 
-        <div className="flex flex-col gap-2 min-h-0 lg:col-start-3 lg:row-start-1 lg:row-span-2">
-          <TradeForm anqa={anqa} onDone={notify} />
+        <div className="rise-in enter-3 flex flex-col gap-2 min-h-0 lg:col-start-3 lg:row-start-1 lg:row-span-2">
+          <TradeForm anqa={anqa} onDone={notify} onDeposit={() => setDepositOpen(true)} />
           <div className="hidden 2xl:block min-h-0 shrink-0">
             <ProofPanel anqa={anqa} />
           </div>
         </div>
 
-        <div className="min-h-[200px] lg:min-h-0 lg:col-start-1 lg:row-start-2">
-          <BottomTabs anqa={anqa} onDone={notify} />
+        <div className="rise-in enter-4 min-h-[200px] lg:min-h-0 lg:col-start-1 lg:row-start-2">
+          <BottomTabs anqa={anqa} onDone={notify} onSelectMarket={selectMarket} onDeposit={() => setDepositOpen(true)} />
         </div>
       </main>
 
+      <DepositModal
+        anqa={anqa}
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        onDone={notify}
+      />
       <Toasts toasts={toasts} />
       <Footer anqa={anqa} />
     </div>
@@ -83,10 +104,13 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`print-in px-3 py-1.5 rounded-md border text-[12px] backdrop-blur-sm ${
-            t.err ? "bg-ask/12 border-ask/35 text-ask" : "bg-raised/95 border-line text-text"
+          className={`toast flex items-center gap-2 px-3.5 py-2 rounded-lg border text-[12px] shadow-lg shadow-black/40 backdrop-blur-sm ${
+            t.err ? "bg-ask/12 border-ask/40 text-ask" : "bg-raised/95 border-bid/35 text-text"
           }`}
         >
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.err ? "bg-ask" : "bg-bid"}`}
+          />
           {t.msg}
         </div>
       ))}
@@ -108,20 +132,44 @@ function Footer({ anqa }: { anqa: ReturnType<typeof useAnqa> }) {
     return () => clearInterval(t);
   }, [anqa.conns]);
 
+  // The chain doesn't pause between polls; neither should the number. A
+  // linear tween across the poll interval reads as the slot simply ticking.
+  const slotShown = useTweened(slot, 3800, true);
+  const frac = anqa.market ? lotFraction(anqa.market) : 1;
+  const tick = anqa.market?.tickSize ?? 1;
+
   return (
     <footer className="shrink-0 flex items-center gap-4 h-7 px-4 border-t border-line-soft text-[10px] text-dim">
       <span>
-        rollup slot <span className="tnum text-muted">{slot ?? "—"}</span>
+        rollup slot{" "}
+        <span className="tnum text-muted">{slotShown === null ? "—" : Math.round(slotShown)}</span>
       </span>
       <span>
         market <span className="tnum text-muted">{anqa.marketId.toString()}</span>
       </span>
       {anqa.pendingFills > 0 && (
-        <span className="text-phoenix/90">
+        <span className="text-phoenix/90 live-dot">
           {anqa.pendingFills} fill{anqa.pendingFills > 1 ? "s" : ""} awaiting settlement
         </span>
       )}
       {anqa.loading && <span className="text-phoenix/70">syncing…</span>}
+
+      {/* the last few prints, drifting through — the venue's pulse */}
+      {anqa.tape.length > 0 && (
+        <span className="hidden md:flex items-center gap-3 ml-4 overflow-hidden">
+          <span className="uppercase tracking-[0.1em] text-[9px]">tape</span>
+          {anqa.tape.slice(0, 4).map((p) => (
+            <span key={p.seq} className="print-in tnum text-muted whitespace-nowrap">
+              {(ticksToUsd(p.priceInTicks, tick) / frac).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+              })}
+              <span className="text-dim ml-1">
+                ×{(p.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 3 })}
+              </span>
+            </span>
+          ))}
+        </span>
+      )}
       <span className="ml-auto">devnet</span>
     </footer>
   );

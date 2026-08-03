@@ -4,31 +4,34 @@
  * anqa — عنقاء
  * "known by name, unseen by eye"
  *
- * The palette is a night with one warm thing in it. Everything structural is
- * a near-black or a grey; the phoenix gold is reserved for the few places
- * that carry meaning — the wordmark, a live mark price, an armed state.
- * Bids and asks get the only other colour, and nothing else competes.
+ * Graphite and one signal. Everything structural is a true-neutral
+ * near-black; the signal blue is reserved for the few places that carry
+ * meaning — the wordmark, a live mark price, an armed state. Bids and asks
+ * get the only other colour, and nothing else competes.
+ *
+ * (--color-phoenix is the accent token's historical name; every component
+ * points at it, so the identity changes here and only here.)
  */
 
 @theme {
-  --color-void: #08090b;
-  --color-ink: #0d0f13;
-  --color-surface: #12151b;
-  --color-raised: #181c24;
-  --color-line: #232833;
-  --color-line-soft: #1b1f27;
+  --color-void: #090a0c;
+  --color-ink: #0e0f12;
+  --color-surface: #14161a;
+  --color-raised: #1b1e24;
+  --color-line: #262a32;
+  --color-line-soft: #1e2127;
 
-  --color-dim: #6b7280;
-  --color-muted: #98a2b3;
-  --color-text: #d7dbe3;
-  --color-bright: #f2f4f8;
+  --color-dim: #646b78;
+  --color-muted: #9aa1ae;
+  --color-text: #d2d6dd;
+  --color-bright: #f4f6f9;
 
-  --color-phoenix: #d99a2b;
-  --color-phoenix-soft: #8a6320;
-  --color-ember: #f0b854;
+  --color-phoenix: #4c8dff;
+  --color-phoenix-soft: #24406e;
+  --color-ember: #5c98ff;
 
-  --color-bid: #3fb27f;
-  --color-ask: #e0574f;
+  --color-bid: #2ebd85;
+  --color-ask: #f6465d;
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
@@ -50,6 +53,90 @@ body {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
+
+/* ── price ticks ─────────────────────────────────────────────────────────
+   A price that moved should say so for a moment, then settle. */
+@keyframes tick-up {
+  0% { color: var(--color-bid); }
+  100% { color: inherit; }
+}
+@keyframes tick-down {
+  0% { color: var(--color-ask); }
+  100% { color: inherit; }
+}
+.tick-up { animation: tick-up 900ms ease-out; }
+.tick-down { animation: tick-down 900ms ease-out; }
+
+/* ── the one big button ──────────────────────────────────────────────────
+   The trade CTA is the only element allowed to be loud. */
+.cta {
+  height: 44px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  transition: filter 120ms ease, transform 60ms ease, opacity 120ms ease;
+}
+.cta:not(:disabled):hover { filter: brightness(1.12); }
+.cta:not(:disabled):active { transform: translateY(1px); }
+.cta:disabled { opacity: 0.35; cursor: not-allowed; }
+.cta-long {
+  color: #041209;
+  background: linear-gradient(180deg, #35cf95, var(--color-bid));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset, 0 8px 24px -12px rgba(46, 189, 133, 0.5);
+}
+.cta-short {
+  color: #1c070b;
+  background: linear-gradient(180deg, #f8607a, var(--color-ask));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 8px 24px -12px rgba(246, 70, 93, 0.5);
+}
+.cta-primary {
+  color: #071120;
+  background: linear-gradient(180deg, var(--color-ember), var(--color-phoenix));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 8px 24px -12px rgba(76, 141, 255, 0.45);
+}
+
+/* ── the leverage slider ────────────────────────────────────────────────── */
+.lev-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--color-phoenix) var(--fill, 20%),
+    var(--color-line) var(--fill, 20%)
+  );
+  outline: none;
+}
+.lev-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-ember);
+  border: 3px solid var(--color-ink);
+  box-shadow: 0 0 0 1.5px var(--color-phoenix);
+  cursor: grab;
+  transition: transform 120ms ease;
+}
+.lev-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+.lev-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-ember);
+  border: 3px solid var(--color-ink);
+  box-shadow: 0 0 0 1.5px var(--color-phoenix);
+  cursor: grab;
+}
+
+/* ── surfaces ──────────────────────────────────────────────────────────── */
+.panel-hover { transition: border-color 150ms ease; }
+.panel-hover:hover { border-color: var(--color-line); }
+.row-hover { transition: background-color 100ms ease; }
+.row-hover:hover { background: color-mix(in oklab, var(--color-raised) 55%, transparent); }
 
 /* The hidden-depth motif: order rows nobody may read. */
 .veil {
@@ -89,6 +176,103 @@ body {
 }
 .print-in {
   animation: print-in 700ms ease-out;
+}
+
+/* ── motion vocabulary ───────────────────────────────────────────────────
+   One rule: motion carries information. Numbers glide, changes flash,
+   arrivals rise in, departures collapse. Nothing loops except the pulse. */
+
+/* A cell whose value just moved, and which way. */
+@keyframes flash-up {
+  0% { background: color-mix(in oklab, var(--color-bid) 16%, transparent); }
+  100% { background: transparent; }
+}
+@keyframes flash-down {
+  0% { background: color-mix(in oklab, var(--color-ask) 16%, transparent); }
+  100% { background: transparent; }
+}
+.flash-up { animation: flash-up 650ms ease-out; border-radius: 3px; }
+.flash-down { animation: flash-down 650ms ease-out; border-radius: 3px; }
+
+/* A row that just arrived: an order rested, a print landed. */
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: none; }
+}
+.row-in { animation: row-in 260ms ease-out; }
+
+/* A position that just came into being gets one breath of gold. */
+@keyframes glow-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-5px);
+    box-shadow: inset 0 0 0 999px color-mix(in oklab, var(--color-phoenix) 10%, transparent);
+  }
+  35% { opacity: 1; transform: none; }
+  100% { box-shadow: inset 0 0 0 999px transparent; }
+}
+.glow-in { animation: glow-in 1200ms ease-out; }
+
+/* A row on its way out — cancel was clicked; the next poll removes it. */
+@keyframes row-out {
+  to { opacity: 0.25; transform: translateX(6px); }
+}
+.row-leaving { animation: row-out 240ms ease-in forwards; pointer-events: none; }
+
+/* Loading rows shimmer quietly; blank flashes are for broken sites. */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+.skeleton {
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 25%,
+    var(--color-raised) 50%,
+    var(--color-surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Panels rise once on load, staggered left to right. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.rise-in { animation: rise-in 420ms ease-out backwards; }
+.enter-1 { animation-delay: 40ms; }
+.enter-2 { animation-delay: 110ms; }
+.enter-3 { animation-delay: 180ms; }
+.enter-4 { animation-delay: 250ms; }
+
+/* Switching tabs cross-fades the pane — fast enough to feel instant. */
+@keyframes tab-swap {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+.tab-swap { animation: tab-swap 140ms ease-out; }
+
+/* A count that changed pops once. */
+@keyframes badge-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+.badge-pop { display: inline-block; animation: badge-pop 260ms ease-out; }
+
+/* Depth bars grow and shrink instead of jumping. */
+.depth-bar { transition: width 320ms ease; }
+
+/* Toasts slide in like a print and see themselves out. */
+@keyframes toast-away {
+  to { opacity: 0; transform: translateY(6px); }
+}
+.toast {
+  animation:
+    print-in 240ms ease-out,
+    toast-away 320ms ease-in 4.1s forwards;
 }
 
 /* Wallet adapter: strip its defaults back to our surface. */

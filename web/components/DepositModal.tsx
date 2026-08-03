@@ -1,0 +1,232 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { BN } from "@coral-xyz/anchor";
+import { PublicKey } from "@solana/web3.js";
+import { Button } from "./ui";
+import { readableError } from "@/lib/anqa";
+import { defundMarket, fundMarket, walletUsdc } from "@/lib/margin";
+import type { Anqa } from "@/lib/useAnqa";
+
+/**
+ * Deposit and withdraw, the way a perp venue does it.
+ *
+ * USDC only — it is the venue's single collateral asset — and one row: what
+ * this market holds against what the wallet holds. Depositing here is the
+ * same act as putting collateral behind a trade, because on an isolated
+ * venue they are the same thing: the market's balance IS the risk of any
+ * position on it.
+ */
+export function DepositModal({
+  anqa,
+  open,
+  onClose,
+  onDone,
+}: {
+  anqa: Anqa;
+  open: boolean;
+  onClose: () => void;
+  onDone: (msg: string, err?: boolean) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [wallet, setWallet] = useState(0);
+  const [account, setAccount] = useState(0);
+
+  const owner = anqa.wallet?.publicKey;
+  const MINT = anqa.marketInfo.mint ? new PublicKey(anqa.marketInfo.mint) : null;
+
+  useEffect(() => {
+    if (!open || !owner || !MINT) return;
+    let stop = false;
+    const tick = async () => {
+      const w = await walletUsdc(anqa.conns.base, MINT, owner);
+      const info = await anqa.conns.er
+        .getAccountInfo(anqa.acc.portfolioOf(owner))
+        .catch(() => null);
+      let a = 0;
+      if (info) {
+        const { readKernel, equity, PF_INNER } = await import("@/lib/portfolio");
+        a = Number(equity(readKernel(Uint8Array.from(info.data.subarray(PF_INNER))))) / 1e6;
+      }
+      if (!stop) {
+        setWallet(w);
+        setAccount(a);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, owner?.toBase58(), anqa.marketInfo.id, busy]);
+
+  if (!open) return null;
+
+  const n = Number(amount) || 0;
+  const ctx = () => ({
+    acc: anqa.acc,
+    marketId: anqa.marketId,
+    owner: owner!,
+    engine: owner!,
+  });
+
+  const faucet = async () => {
+    if (!owner) return;
+    setBusy("Minting");
+    try {
+      const r = await fetch("/api/faucet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: owner.toBase58(), marketId: anqa.marketInfo.id }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? "Faucet failed");
+      onDone("250,000 test USDC minted to your wallet");
+    } catch (e: any) {
+      onDone(readableError(e), true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doDeposit = async () => {
+    const base = anqa.programFor("base");
+    const er = anqa.programFor("er");
+    if (!n || !base || !owner || !MINT || !anqa.sessionKp) {
+      return onDone("Enter an amount", true);
+    }
+    setBusy("Depositing");
+    try {
+      await fundMarket(base, er, ctx(), {
+        usd: account + n,
+        mint: MINT,
+        sessionKey: anqa.sessionKp.publicKey,
+        sessionPda: anqa.acc.sessionOf(owner),
+        need: {
+          open: !anqa.portfolio,
+          delegate: !anqa.portfolioDelegated,
+          grant: !anqa.sessionActive,
+        },
+        conn: anqa.conns.base,
+        onStep: (m) => setBusy(m),
+      });
+      onDone(`$${n.toLocaleString()} deposited to your account`);
+      setAmount("");
+      anqa.refresh();
+    } catch (e: any) {
+      onDone(readableError(e), true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doWithdraw = async () => {
+    const base = anqa.programFor("base");
+    const er = anqa.programFor("er");
+    const amt = n || account;
+    if (!amt || !base || !er || !owner || !MINT) return onDone("Nothing to withdraw", true);
+    setBusy("Withdrawing");
+    try {
+      await defundMarket(base, er, ctx(), {
+        usd: amt,
+        mint: MINT,
+        conn: anqa.conns.base,
+        onStep: (m) => setBusy(m),
+      });
+      onDone(`$${amt.toLocaleString()} returned to your wallet`);
+      setAmount("");
+      anqa.refresh();
+    } catch (e: any) {
+      onDone(readableError(e), true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/60 backdrop-blur-sm p-4"
+      onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()}
+    >
+      <div className="w-full max-w-md bg-ink border border-line rounded-xl shadow-[0_24px_64px_rgba(0,0,0,0.6)] overflow-hidden">
+        <header className="flex items-center h-11 px-4 border-b border-line-soft">
+          <span className="text-[13px] font-semibold text-bright">Your trading account</span>
+          <button
+            onClick={() => !busy && onClose()}
+            className="ml-auto h-7 w-7 grid place-items-center rounded text-dim hover:text-text hover:bg-raised transition-colors"
+          >
+            ✕
+          </button>
+        </header>
+
+        <div className="p-4 flex flex-col gap-3">
+          {/* the two balances, the way Flash lays them out */}
+          <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-2 text-[11px]">
+            <span className="text-dim uppercase tracking-[0.1em] text-[10px]">Token</span>
+            <span className="text-dim uppercase tracking-[0.1em] text-[10px] text-right">
+              In your account
+            </span>
+            <span className="text-dim uppercase tracking-[0.1em] text-[10px] text-right">
+              Your wallet
+            </span>
+
+            <span className="font-medium text-bright">USDC</span>
+            <span className="tnum text-right text-phoenix">
+              ${account.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className="tnum text-right text-text">
+              ${wallet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 h-11 px-3 bg-void border border-line rounded-lg focus-within:border-phoenix-soft transition-colors">
+            <input
+              autoFocus
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              inputMode="decimal"
+              className="tnum flex-1 min-w-0 bg-transparent text-[16px] text-bright outline-none placeholder:text-dim/50"
+            />
+            <button
+              onClick={() => setAmount(wallet > 0 ? wallet.toFixed(2) : "")}
+              className="text-[10px] text-phoenix/80 hover:text-phoenix transition-colors"
+            >
+              max
+            </button>
+            <span className="text-[11px] text-dim">USDC</span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              className="cta cta-primary flex-1 h-10 text-[13px]"
+              disabled={!!busy || !anqa.sessionKp}
+              onClick={doDeposit}
+            >
+              {busy ? `${busy}…` : "Deposit"}
+            </button>
+            <Button
+              variant="ghost"
+              disabled={!!busy || account <= 0}
+              onClick={doWithdraw}
+            >
+              Withdraw
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-line-soft">
+            <p className="text-[10px] text-dim leading-relaxed max-w-[70%]">
+              One account, every market. Each position risks only the collateral you commit to it.
+            </p>
+            <Button size="sm" variant="ghost" disabled={!!busy} onClick={faucet}>
+              Get test USDC
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

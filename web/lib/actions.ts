@@ -1,7 +1,7 @@
 "use client";
 
 import { BN, Program } from "@coral-xyz/anchor";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { ACL, DLP, MAGIC_CONTEXT, MAGIC_PROGRAM, PROGRAM_ID, type AnqaAccounts } from "./anqa";
 
@@ -14,6 +14,10 @@ type Ctx = {
   owner: PublicKey;
   /** The venue's engine key — permitted to read the book and settle fills. */
   engine: PublicKey;
+  /** The trading signer: the owner, or a granted session key. */
+  trader?: PublicKey;
+  /** The session grant PDA, when a session key signs. */
+  session?: PublicKey | null;
 };
 
 /**
@@ -50,13 +54,15 @@ export async function openAccount(p: Program, c: Ctx) {
 export async function permissionPortfolio(p: Program, c: Ctx) {
   const portfolio = c.acc.portfolioOf(c.owner);
   return p.methods
-    .createPortfolioPermission(c.marketId, [
+    // Isolated margin: portfolios are market-seeded, so the permission binds
+    // to this market's id and market account.
+    .createPortfolioPermission(c.acc.groupId, [
       { pubkey: c.owner, flags: ALL_FLAGS },
       { pubkey: c.engine, flags: ALL_FLAGS },
     ])
     .accounts({
       trader: c.owner,
-      market: c.acc.market,
+      market: c.acc.groupMarket,
       portfolio,
       permission: c.acc.permissionOf(portfolio),
       permissionProgram: ACL,
@@ -94,7 +100,7 @@ export async function delegatePortfolio(p: Program, c: Ctx) {
   const portfolio = c.acc.portfolioOf(c.owner);
   const d = c.acc.delegationOf(portfolio);
   return p.methods
-    .delegatePortfolio(c.marketId)
+    .delegatePortfolio(c.acc.groupId)
     .accounts({
       trader: c.owner,
       portfolio,
@@ -108,12 +114,174 @@ export async function delegatePortfolio(p: Program, c: Ctx) {
     .rpc();
 }
 
+/**
+ * The whole onboarding for one market in a single transaction: open the
+ * margin account, create the ledger, deposit, delegate into the rollup,
+ * grant the session key and float it fee SOL — whichever of those this
+ * wallet still needs. One signature covers a brand-new market end to end;
+ * the faucet mints the test USDC server-side just before this runs.
+ */
+export async function setupMarket(
+  p: Program,
+  c: Ctx,
+  args: {
+    mint: PublicKey;
+    depositAtoms: BN;
+    sessionKey: PublicKey;
+    durationSecs: BN;
+    need: { open: boolean; deposit: boolean; delegate: boolean; grant: boolean };
+  }
+) {
+  const portfolio = c.acc.portfolioOf(c.owner);
+  const ledger = c.acc.ledgerOf(c.owner);
+  const ixs = [];
+
+  if (args.need.open) {
+    ixs.push(
+      await p.methods
+        .openPortfolio()
+        .accounts({ trader: c.owner, market: c.acc.market, portfolio, systemProgram: SystemProgram.programId })
+        .instruction(),
+      await p.methods
+        .initializeLedger()
+        .accounts({ trader: c.owner, market: c.acc.market, ledger, systemProgram: SystemProgram.programId })
+        .instruction()
+    );
+  }
+  if (args.need.deposit) {
+    const receipt = c.acc.depositReceiptOf(c.owner);
+    const d = c.acc.delegationOf(receipt);
+    ixs.push(
+      await p.methods
+        .deposit(args.depositAtoms, false)
+        .accounts({
+          trader: c.owner,
+          market: c.acc.market,
+          ledger,
+          traderTokenAccount: getAssociatedTokenAddressSync(args.mint, c.owner),
+          vault: c.acc.vault,
+          receipt,
+          buffer: d.buffer,
+          delegationRecord: d.delegationRecord,
+          delegationMetadata: d.delegationMetadata,
+          ownerProgram: PROGRAM_ID,
+          delegationProgram: DLP,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction()
+    );
+  }
+  if (args.need.delegate) {
+    const d = c.acc.delegationOf(portfolio);
+    ixs.push(
+      await p.methods
+        .delegatePortfolio(c.acc.groupId)
+        .accounts({
+          trader: c.owner,
+          portfolio,
+          bufferPortfolio: d.buffer,
+          delegationRecordPortfolio: d.delegationRecord,
+          delegationMetadataPortfolio: d.delegationMetadata,
+          ownerProgram: PROGRAM_ID,
+          delegationProgram: DLP,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction()
+    );
+  }
+  if (args.need.grant) {
+    ixs.push(
+      await p.methods
+        .grantSession(args.sessionKey, args.durationSecs)
+        .accounts({
+          owner: c.owner,
+          session: c.acc.sessionOf(c.owner),
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction(),
+      SystemProgram.transfer({ fromPubkey: c.owner, toPubkey: args.sessionKey, lamports: 30_000_000 })
+    );
+  }
+  if (ixs.length === 0) return null;
+  const tx = new Transaction().add(...ixs);
+  return (p.provider as any).sendAndConfirm(tx);
+}
+
+/**
+ * One signature, whole session: delegate the portfolio into the rollup,
+ * grant the browser's session key, and float it enough SOL for fees — a
+ * single base-layer transaction, the only wallet prompt trading ever costs.
+ */
+export async function delegateAndGrant(
+  p: Program,
+  c: Ctx,
+  sessionKey: PublicKey,
+  durationSecs: BN
+) {
+  const portfolio = c.acc.portfolioOf(c.owner);
+  const d = c.acc.delegationOf(portfolio);
+  const grant = await p.methods
+    .grantSession(sessionKey, durationSecs)
+    .accounts({
+      owner: c.owner,
+      session: c.acc.sessionOf(c.owner),
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+  return p.methods
+    .delegatePortfolio(c.acc.groupId)
+    .accounts({
+      trader: c.owner,
+      portfolio,
+      bufferPortfolio: d.buffer,
+      delegationRecordPortfolio: d.delegationRecord,
+      delegationMetadataPortfolio: d.delegationMetadata,
+      ownerProgram: PROGRAM_ID,
+      delegationProgram: DLP,
+      systemProgram: SystemProgram.programId,
+    })
+    .postInstructions([
+      grant,
+      SystemProgram.transfer({
+        fromPubkey: c.owner,
+        toPubkey: sessionKey,
+        lamports: 30_000_000, // 0.03 SOL of devnet fee float
+      }),
+    ])
+    .rpc();
+}
+
+/** Re-arm one-click trading on an already-delegated account. One signature. */
+export async function grantSessionOnly(
+  p: Program,
+  c: Ctx,
+  sessionKey: PublicKey,
+  durationSecs: BN
+) {
+  return p.methods
+    .grantSession(sessionKey, durationSecs)
+    .accounts({
+      owner: c.owner,
+      session: c.acc.sessionOf(c.owner),
+      systemProgram: SystemProgram.programId,
+    })
+    .postInstructions([
+      SystemProgram.transfer({
+        fromPubkey: c.owner,
+        toPubkey: sessionKey,
+        lamports: 30_000_000,
+      }),
+    ])
+    .rpc();
+}
+
 /** Rollup: credit the portfolio from the base-layer ledger. Idempotent. */
 export async function claimDeposit(p: Program, c: Ctx) {
   return p.methods
     .claimDeposit()
     .accounts({
-      caller: c.owner,
+      caller: c.trader ?? c.owner,
       market: c.acc.market,
       riskGroup: c.acc.riskGroup,
       assetSlots: c.acc.assetSlots,
@@ -144,22 +312,35 @@ export async function placeOrder(
     priceInTicks: BN;
     baseLots: BN;
     clientOrderId: BN;
+    /** Collateral to stand behind this market's position, quote atoms.
+     *  Isolated margin: this is the whole risk of the resulting position. */
+    collateralAtoms?: BN;
     makers?: PublicKey[];
   }
 ) {
   const side = args.side === "bid" ? { bid: {} } : { ask: {} };
   const type = { [args.orderType]: {} } as Record<string, object>;
   return p.methods
-    .placeOrder(side, type, args.priceInTicks, args.baseLots, args.clientOrderId)
+    .placeOrder(
+      side,
+      type,
+      args.priceInTicks,
+      args.baseLots,
+      args.clientOrderId,
+      args.collateralAtoms ?? new BN(0)
+    )
+    // Crossing several book levels costs more compute than the 200k default.
+    .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       book: c.acc.book,
       riskGroup: c.acc.riskGroup,
       assetSlots: c.acc.assetSlots,
       oracleState: c.acc.oracleState,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .remainingAccounts(
       (args.makers ?? []).map((pubkey) => ({
         pubkey,
@@ -179,11 +360,12 @@ export async function cancelOrder(
   return p.methods
     .cancelOrder(side === "bid" ? { bid: {} } : { ask: {} }, clientOrderId)
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       book: c.acc.book,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .rpc();
 }
 
@@ -191,11 +373,12 @@ export async function cancelAll(p: Program, c: Ctx) {
   return p.methods
     .cancelAllOrders()
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       book: c.acc.book,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .rpc();
 }
 
@@ -209,15 +392,18 @@ export async function closePosition(
 ) {
   return p.methods
     .closePosition(worstPriceInTicks, maxBaseLots)
+    // Same budget story as placeOrder: a close can walk the whole ladder.
+    .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       book: c.acc.book,
       riskGroup: c.acc.riskGroup,
       assetSlots: c.acc.assetSlots,
       oracleState: c.acc.oracleState,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .remainingAccounts(
       makers.map((pubkey) => ({ pubkey, isSigner: false, isWritable: true }))
     )
@@ -245,10 +431,11 @@ export async function placeTrigger(
       args.maxBaseLots
     )
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .rpc();
 }
 
@@ -256,10 +443,11 @@ export async function cancelTrigger(p: Program, c: Ctx, triggerId: BN) {
   return p.methods
     .cancelTriggerOrder(triggerId)
     .accounts({
-      trader: c.owner,
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
       market: c.acc.market,
       portfolio: c.acc.portfolioOf(c.owner),
-    })
+    } as never)
     .rpc();
 }
 
@@ -287,6 +475,23 @@ export async function settleFill(
       takerPortfolio: c.acc.portfolioOf(taker),
       makerPortfolio: c.acc.portfolioOf(maker),
       tape: c.acc.tape,
+    })
+    .rpc();
+}
+
+/** Rollup: promote proven-backed junior profit into withdrawable capital.
+ *  Wins land junior ("losses are senior, wins are junior"); until this runs
+ *  a winner's realized PnL is not withdrawable. Permissionless, and a no-op
+ *  when nothing qualifies — safe to fire before every withdrawal. */
+export async function realizePnl(p: Program, c: Ctx) {
+  return p.methods
+    .realizePnl()
+    .accounts({
+      caller: c.owner,
+      market: c.acc.market,
+      riskGroup: c.acc.riskGroup,
+      assetSlots: c.acc.assetSlots,
+      portfolio: c.acc.portfolioOf(c.owner),
     })
     .rpc();
 }

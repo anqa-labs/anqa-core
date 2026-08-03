@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import {
   CandlestickSeries,
   HistogramSeries,
+  LineStyle,
   createChart,
   createSeriesMarkers,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { ticksToUsd } from "@/lib/anqa";
+import { lotFraction, ticksToUsd } from "@/lib/anqa";
+import { useAllPositions } from "@/lib/useAllPositions";
 import { TradingViewChart } from "./TradingViewChart";
 import type { Anqa } from "@/lib/useAnqa";
 
@@ -52,7 +55,9 @@ export function Chart({ anqa }: { anqa: Anqa }) {
   // The markers plugin is generic over the series' time type; keeping the
   // handle loose avoids fighting that generic for no benefit.
   const markersRef = useRef<{ setMarkers: (m: any[]) => void } | null>(null);
+  const liqLineRef = useRef<IPriceLine | null>(null);
   const lastBar = useRef<Candle | null>(null);
+  const positions = useAllPositions();
 
   const [res, setRes] = useState<(typeof RESOLUTIONS)[number]>(RESOLUTIONS[1]);
   const [loading, setLoading] = useState(true);
@@ -72,36 +77,37 @@ export function Chart({ anqa }: { anqa: Anqa }) {
     const chart = createChart(box.current, {
       layout: {
         background: { color: "transparent" },
-        textColor: "#6b7280",
+        textColor: "#646b78",
         fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
         fontSize: 11,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(35,40,51,0.5)" },
-        horzLines: { color: "rgba(35,40,51,0.5)" },
+        vertLines: { color: "rgba(38,42,50,0.5)" },
+        horzLines: { color: "rgba(38,42,50,0.5)" },
       },
       rightPriceScale: {
-        borderColor: "#1b1f27",
+        borderColor: "#1e2127",
         scaleMargins: { top: 0.08, bottom: 0.26 },
       },
-      timeScale: { borderColor: "#1b1f27", timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: "#1e2127", timeVisible: true, secondsVisible: false },
       crosshair: {
         mode: 0,
-        vertLine: { color: "#6b7280", width: 1, style: 3, labelBackgroundColor: "#181c24" },
-        horzLine: { color: "#6b7280", width: 1, style: 3, labelBackgroundColor: "#181c24" },
+        vertLine: { color: "#646b78", width: 1, style: 3, labelBackgroundColor: "#1b1e24" },
+        horzLine: { color: "#646b78", width: 1, style: 3, labelBackgroundColor: "#1b1e24" },
       },
       autoSize: true,
     });
 
     const candles = chart.addSeries(CandlestickSeries, {
-      upColor: "#3fb27f",
-      downColor: "#e0574f",
-      borderUpColor: "#3fb27f",
-      borderDownColor: "#e0574f",
-      wickUpColor: "#3fb27f",
-      wickDownColor: "#e0574f",
-      priceLineColor: "#d99a2b",
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+      upColor: "#2ebd85",
+      downColor: "#f6465d",
+      borderUpColor: "#2ebd85",
+      borderDownColor: "#f6465d",
+      wickUpColor: "#2ebd85",
+      wickDownColor: "#f6465d",
+      priceLineColor: "#4c8dff",
     });
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
@@ -128,8 +134,29 @@ export function Chart({ anqa }: { anqa: Anqa }) {
       candleRef.current = null;
       volRef.current = null;
       markersRef.current = null;
+      liqLineRef.current = null; // died with its series
     };
   }, [source]);
+
+  // ── the liquidation line: the price where this position dies ────────────
+  useEffect(() => {
+    const series = candleRef.current;
+    if (source !== "venue" || !series) return;
+    if (liqLineRef.current) {
+      series.removePriceLine(liqLineRef.current);
+      liqLineRef.current = null;
+    }
+    const row = positions.find((r) => r.market.id === anqa.marketInfo.id);
+    if (!row || row.liq === null) return;
+    liqLineRef.current = series.createPriceLine({
+      price: row.liq,
+      color: "#f6465d",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `LIQ ${row.isLong ? "long" : "short"} ${row.size.toLocaleString(undefined, { maximumFractionDigits: anqa.marketInfo.sizeDp })}`,
+    });
+  }, [positions, anqa.marketInfo.id, source, loading]);
 
   // ── load history whenever the timeframe changes ─────────────────────────
   useEffect(() => {
@@ -138,7 +165,9 @@ export function Chart({ anqa }: { anqa: Anqa }) {
     setLoading(true);
     const to = Math.floor(Date.now() / 1000);
     const from = to - res.span;
-    fetch(`/api/candles?resolution=${res.value}&from=${from}&to=${to}`)
+    fetch(
+      `/api/candles?resolution=${res.value}&from=${from}&to=${to}&symbol=${encodeURIComponent(anqa.marketInfo.pythSymbol)}`
+    )
       .then((r) => r.json())
       .then(({ candles }: { candles: Candle[] }) => {
         if (cancelled || !candleRef.current || !volRef.current) return;
@@ -174,7 +203,8 @@ export function Chart({ anqa }: { anqa: Anqa }) {
   useEffect(() => {
     if (source !== "venue") return;
     if (anqa.markPrice === null || !candleRef.current || !lastBar.current) return;
-    const price = anqa.markPrice / 1e6;
+    // Per-lot mark → per-BTC, the unit the candles are drawn in.
+    const price = anqa.markPrice / 1e6 / lotFraction(anqa.market);
     const secs = res.value === "1D" ? 86400 : Number(res.value) * 60;
     const now = Math.floor(Date.now() / 1000);
     const bucket = Math.floor(now / secs) * secs;
@@ -204,6 +234,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
   useEffect(() => {
     if (source !== "venue" || !markersRef.current) return;
     const tick = anqa.market?.tickSize ?? 1;
+    const frac = lotFraction(anqa.market);
     const secs = res.value === "1D" ? 86400 : Number(res.value) * 60;
     markersRef.current.setMarkers(
       [...anqa.tape]
@@ -212,9 +243,9 @@ export function Chart({ anqa }: { anqa: Anqa }) {
         .map((p) => ({
           time: (Math.floor(p.timestamp / secs) * secs) as UTCTimestamp,
           position: "belowBar" as const,
-          color: "#d99a2b",
+          color: "#4c8dff",
           shape: "arrowUp" as const,
-          text: `${p.baseLots} @ ${ticksToUsd(p.priceInTicks, tick).toFixed(0)}`,
+          text: `${(p.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })} @ ${(ticksToUsd(p.priceInTicks, tick) / frac).toFixed(0)}`,
         }))
     );
   }, [anqa.tape, anqa.market, res, source]);
@@ -269,7 +300,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
       <div className="relative flex-1 min-h-[300px]">
         {tv ? (
           <TradingViewChart
-            market="BTC-PERP"
+            market={anqa.marketInfo.symbol}
             interval={res.value}
             // If their embed is blocked, fall back to the chart we draw
             // ourselves rather than leaving the trader looking at nothing.
@@ -279,7 +310,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
           <>
             {/* OHLC readout, top-left, the way every terminal does it */}
             <div className="absolute z-10 top-2 left-3 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px] pointer-events-none">
-              <span className="text-muted font-medium">BTC-PERP</span>
+              <span className="text-muted font-medium">{anqa.marketInfo.symbol}</span>
               <span className="text-dim">
                 O <span className={`tnum ${up ? "text-bid" : "text-ask"}`}>{fmt(ohlc?.open)}</span>
               </span>

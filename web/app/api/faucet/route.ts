@@ -11,6 +11,7 @@ import {
   Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
+import { MARKETS } from "@/lib/markets";
 
 /**
  * Devnet play-money faucet.
@@ -27,17 +28,23 @@ const DECIMALS = 6;
 
 export async function POST(req: Request) {
   const key = process.env.ANQA_FAUCET_KEY;
-  const mintStr = process.env.NEXT_PUBLIC_COLLATERAL_MINT;
-  if (!key || !mintStr) {
+  if (!key) {
     return NextResponse.json({ error: "Faucet is not configured" }, { status: 503 });
   }
 
   let owner: PublicKey;
+  let mintStr: string | undefined;
   try {
     const body = await req.json();
     owner = new PublicKey(body.owner);
+    // Every market has its own play-money mint; default to the first.
+    const market = MARKETS.find((m) => m.id === Number(body.marketId)) ?? MARKETS[0];
+    mintStr = market.mint || process.env.NEXT_PUBLIC_COLLATERAL_MINT;
   } catch {
     return NextResponse.json({ error: "Bad request" }, { status: 400 });
+  }
+  if (!mintStr) {
+    return NextResponse.json({ error: "Faucet is not configured" }, { status: 503 });
   }
 
   try {

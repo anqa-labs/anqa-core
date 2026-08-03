@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>anqa — how the dark venue works</title>
+<style>
+  :root {
+    --void: #08090b; --ink: #0d0f13; --surface: #12151b; --raised: #181c24;
+    --line: #232833; --line-soft: #1b1f27;
+    --dim: #6b7280; --muted: #98a2b3; --text: #d7dbe3; --bright: #f2f4f8;
+    --phoenix: #d99a2b; --ember: #f0b854; --bid: #3fb27f; --ask: #e0574f;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--void); color: var(--text);
+    font: 15px/1.7 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+  main { max-width: 880px; margin: 0 auto; padding: 0 24px 96px; }
+  a { color: var(--ember); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.hero { padding: 72px 0 48px; border-bottom: 1px solid var(--line-soft); }
+  .wordmark { font-size: 34px; font-weight: 650; letter-spacing: 0.22em; color: var(--bright); }
+  .wordmark .glyph { color: var(--phoenix); }
+  .tagline { margin-top: 8px; color: var(--dim); font-style: italic; }
+  .hero p.lede { margin-top: 24px; font-size: 17px; color: var(--muted); max-width: 60ch; }
+  .cta-row { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 10px; font-weight: 600; font-size: 14px;
+  }
+  .btn-gold { background: linear-gradient(180deg, var(--ember), var(--phoenix)); color: #1a1206; }
+  .btn-ghost { border: 1px solid var(--line); color: var(--text); }
+
+  h2 {
+    margin: 64px 0 6px; font-size: 13px; font-weight: 600; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--phoenix);
+  }
+  h3 { margin: 28px 0 8px; font-size: 16px; color: var(--bright); }
+  p { margin: 12px 0; }
+  p, li { color: var(--text); }
+  .quiet { color: var(--dim); font-size: 13px; }
+  strong { color: var(--bright); font-weight: 600; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.88em;
+    background: var(--surface); border: 1px solid var(--line-soft);
+    padding: 1px 6px; border-radius: 5px; color: var(--ember);
+  }
+  ul, ol { padding-left: 22px; margin: 12px 0; }
+  li { margin: 6px 0; }
+
+  .card {
+    background: var(--ink); border: 1px solid var(--line-soft); border-radius: 12px;
+    padding: 20px 22px; margin: 18px 0;
+  }
+
+  /* architecture diagram */
+  .arch { display: grid; grid-template-columns: 1fr 56px 1fr; gap: 0; align-items: stretch; margin: 22px 0; }
+  .layer {
+    background: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px;
+  }
+  .layer h4 {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+    margin-bottom: 10px;
+  }
+  .layer.rollup { border-color: rgba(217,154,43,0.45); }
+  .layer.rollup h4 { color: var(--phoenix); }
+  .chip {
+    display: inline-block; margin: 3px 4px 3px 0; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; border: 1px solid var(--line); color: var(--muted); background: var(--surface);
+  }
+  .chip.hot { border-color: rgba(217,154,43,0.4); color: var(--ember); }
+  .arrows { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--dim); font-size: 12px; }
+  .arrows span { white-space: nowrap; transform: rotate(0); }
+  @media (max-width: 720px) {
+    .arch { grid-template-columns: 1fr; }
+    .arrows { flex-direction: row; padding: 6px 0; }
+  }
+
+  /* trade lifecycle */
+  .steps { counter-reset: step; margin: 20px 0; }
+  .step {
+    position: relative; padding: 14px 18px 14px 58px; border-left: 1px solid var(--line-soft);
+    margin-left: 18px;
+  }
+  .step::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: -17px; top: 14px; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--line); color: var(--ember);
+    display: grid; place-items: center; font-size: 13px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .step b { color: var(--bright); display: block; margin-bottom: 2px; }
+  .step p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+
+  .tape {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+    background: var(--void); border: 1px solid var(--line-soft); border-radius: 10px;
+    padding: 14px 16px; color: var(--muted); overflow-x: auto;
+  }
+  .tape .px { color: var(--bright); }
+  .tape .dim { color: var(--dim); }
+
+  .veil-demo { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .veil-demo th { text-align: left; color: var(--dim); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); }
+  .veil-demo td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); }
+  .veil {
+    display: inline-block; height: 10px; width: 90%; border-radius: 3px; opacity: 0.5;
+    background: repeating-linear-gradient(-45deg, var(--line) 0 1px, transparent 1px 7px);
+  }
+  .bid { color: var(--bid); } .ask { color: var(--ask); }
+
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--line-soft); color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="wordmark"><span class="glyph">✦</span> anqa</div>
+    <div class="tagline">عنقاء — known by name, unseen by eye</div>
+    <p class="lede">
+      A perpetual futures exchange with a <strong>dark order book</strong>: a real on-chain CLOB where
+      nobody — not other traders, not bots, not the sequencer-watchers — can read resting orders or
+      positions. Only the trades themselves print. Built on Solana inside a
+      <strong>MagicBlock ephemeral rollup</strong>, with
+      <strong>Percolator</strong> as the risk kernel.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-gold" href="/">Open the terminal</a>
+      <a class="btn btn-ghost" href="#lifecycle">Life of a trade ↓</a>
+    </div>
+  </header>
+
+  <h2>Why dark</h2>
+  <p>
+    A lit order book leaks everything: your resting orders advertise your intent, your position invites
+    hunting, and every taker's flow is copyable in real time. Serious size does not want to trade in a
+    glass room. anqa keeps the <em>mechanics</em> of a central limit order book — price-time priority,
+    partial fills, real counterparties — while making the book itself unreadable.
+  </p>
+  <div class="card">
+    <table class="veil-demo">
+      <tr><th>Price</th><th>Size</th><th>Total</th></tr>
+      <tr><td><span class="veil"></span></td><td><span class="veil"></span></td><td class="quiet">hidden</td></tr>
+      <tr><td><span class="veil"></span></td><td><span class="veil"></span></td><td class="quiet">hidden</td></tr>
+      <tr><td class="tnum px" style="color:var(--phoenix)">63,041.45</td><td class="quiet">mark</td><td></td></tr>
+      <tr><td><span class="veil"></span></td><td><span class="veil"></span></td><td class="quiet">hidden</td></tr>
+    </table>
+    <p class="quiet" style="margin-top:10px">
+      What every trader sees of the book: depth exists, but it has no numbers. Your own orders are the
+      only rows you can read. Nobody reads yours.
+    </p>
+  </div>
+
+  <h2>Architecture</h2>
+  <p>
+    The venue lives on two layers at once, and the split is the design: <strong>custody never leaves
+    base chain; execution never leaves the rollup.</strong>
+  </p>
+  <div class="arch">
+    <div class="layer">
+      <h4>Base — Solana</h4>
+      <div>
+        <span class="chip">Custody vault (USDC)</span>
+        <span class="chip">Deposit ledger</span>
+        <span class="chip">Market config</span>
+        <span class="chip">Session grants</span>
+        <span class="chip">Withdraw receipts</span>
+      </div>
+      <p class="quiet" style="margin-top:10px">
+        The permanent record. Tokens only ever move here. Slow, public, final.
+      </p>
+    </div>
+    <div class="arrows">
+      <span>delegate →</span>
+      <span>← commit</span>
+    </div>
+    <div class="layer rollup">
+      <h4>Ephemeral rollup — MagicBlock</h4>
+      <div>
+        <span class="chip hot">Dark order book</span>
+        <span class="chip hot">Portfolios (margin accounts)</span>
+        <span class="chip hot">Risk group — Percolator</span>
+        <span class="chip hot">Oracle relay (Pyth)</span>
+        <span class="chip hot">Public tape</span>
+      </div>
+      <p class="quiet" style="margin-top:10px">
+        The trading floor. ~50ms slots, no gas races, accounts readable only by policy —
+        and physically unreadable on a TEE validator.
+      </p>
+    </div>
+  </div>
+  <p>
+    <strong>Delegation</strong> is MagicBlock's primitive: an account's ownership is temporarily handed
+    to the rollup, which executes transactions against it at rollup speed and later commits final state
+    back to base. anqa delegates the book, portfolios, risk state, oracle relay and tape. The custody
+    vault is deliberately never delegated — a rollup bug can corrupt a price, never a balance.
+  </p>
+  <p>
+    <strong>Privacy</strong> is native, not bolted on. The book account carries an access-control list
+    naming exactly one reader: the matching engine. On the public devnet rollup that is on-chain
+    policy; on MagicBlock's TEE validator the RPC itself enforces it, so the order book bytes never
+    leave the enclave. No zero-knowledge circuits, no mixers — just an account nobody may read.
+  </p>
+
+  <h2 id="lifecycle">Life of a trade</h2>
+  <div class="steps">
+    <div class="step"><b>Deposit — base chain</b>
+      <p>USDC moves into the custody vault; a monotonic ledger records it. This is the only moment tokens move.</p></div>
+    <div class="step"><b>Start session — one wallet signature</b>
+      <p>Your margin account (portfolio) is delegated into the rollup, and in the same transaction a browser-held
+      <em>session key</em> is granted trading rights. It can trade — and only trade. It cannot touch funds,
+      and you can revoke it from base at any time. This is the last popup you see.</p></div>
+    <div class="step"><b>Claim — inside the rollup</b>
+      <p>The rollup credits your portfolio from the base ledger. Your collateral is now live margin.</p></div>
+    <div class="step"><b>Order — signed silently</b>
+      <p>Pay × leverage defines your size. The order crosses the dark book under price-time priority; it can
+      slice across many counterparties. The program checks the oracle band first — no fill may stray from the
+      mark, because a perp fill mints value at its price.</p></div>
+    <div class="step"><b>Match ≠ settle — the dark decoupling</b>
+      <p>On a lit book the taker names the makers it crossed. Here it cannot see them — so matched fills
+      <em>queue</em> on the book instead of settling inline. Matching decides <em>who trades at what price</em>;
+      nothing else.</p></div>
+    <div class="step"><b>Settle — the engine's crank</b>
+      <p>A permissionless keeper drives <code>settle_fill</code>: each queued fill is executed through the
+      Percolator risk kernel, which mints the long/short pair or refuses on margin. The engine adds liveness,
+      never authority — it can only execute what the book already matched, at the price it matched, between
+      the parties it named.</p></div>
+    <div class="step"><b>Print — the tape</b>
+      <p>The one public artifact: price, size, time. No maker, no taker, no side.</p></div>
+    <div class="step"><b>Hold — marked to market</b>
+      <p>The keeper cranks the mark from Pyth every ~2s and refreshes open positions, so PnL, margin and
+      liquidation risk track the live price. Take-profit / stop-loss triggers sit <em>off-book</em> inside your
+      portfolio — reduce-only by construction, invisible to the market until they fire.</p></div>
+    <div class="step"><b>Close &amp; withdraw — back across the boundary</b>
+      <p>Closing is a reduce-only cross of the book (it can never flip you). Withdrawal is a three-leg
+      handshake: base reserves a receipt, the rollup's kernel authorizes it against your equity, base pays out.
+      The rollup approves; only base moves money.</p></div>
+  </div>
+  <div class="tape">
+    <span class="dim">the tape — everything the world ever sees:</span><br/>
+    <span class="px">63,094.00</span> · 0.10 BTC · 14:32:07<br/>
+    <span class="px">63,145.00</span> · 0.80 BTC · 14:32:08<br/>
+    <span class="dim">price, size, time. nothing else.</span>
+  </div>
+
+  <h2>The risk kernel</h2>
+  <p>
+    Every fill settles through <strong>Percolator</strong>, a formally-specified margin engine that anqa
+    embeds as its solvency authority. It nets positions (one account, one position per market), computes
+    equity and margin requirements, realizes losses eagerly and treats unrealized profit as junior to
+    them, and refuses any trade a portfolio cannot carry. anqa's wrapper adds what the kernel deliberately
+    leaves out: the oracle execution band, per-lot price scaling, and reserved margin for resting orders —
+    so you cannot paper the book with orders you could never honour.
+  </p>
+  <p>
+    The venue's marks come from <strong>Pyth</strong>. Inside the rollup, Pyth's accounts are clone-read
+    and relayed by the keeper, then accepted through five defences: source authenticity, staleness,
+    confidence, cross-source deviation, and a move-band circuit breaker that freezes liquidations rather
+    than mark on a manipulated print. Funding accrues against an EMA — a wick cannot drain a side.
+  </p>
+
+  <h2>Who runs it</h2>
+  <div class="two">
+    <div class="card">
+      <h3>The keeper — liveness, not authority</h3>
+      <p class="quiet">Permissionless loops anyone could run: relay the oracle, crank the mark and funding,
+      settle queued fills, mark positions to market, sweep expired state, re-quote depth. Losing the keeper
+      degrades the venue; it cannot steal from it.</p>
+    </div>
+    <div class="card">
+      <h3>The maker — depth on demand</h3>
+      <p class="quiet">A resident market maker quotes a ladder both sides of the mark so there is always
+      someone to trade against. Every long you open is matched, dollar for dollar, by resting shorts —
+      one counterparty or many, sliced by price-time priority.</p>
+    </div>
+  </div>
+
+  <h2>Honest devnet caveats</h2>
+  <ul>
+    <li>This deployment runs on Solana <strong>devnet</strong> with play-money USDC (there's a faucet — help yourself).</li>
+    <li>On the <em>public</em> devnet rollup, book privacy is on-chain policy but not RPC-enforced; full
+        enforcement is the TEE validator's job. Dark by design, TEE-ready.</li>
+    <li>Three markets run today — BTC, SOL and ETH perps — each a fully isolated venue: own book, vault,
+        collateral and risk group.</li>
+  </ul>
+
+  <footer>
+    <p><a href="/">← back to the terminal</a></p>
+    <p style="margin-top:6px">anqa · a dark-book perp DEX on Solana × MagicBlock ephemeral rollups · Percolator risk kernel · Pyth oracles</p>
+  </footer>
+</main>
+</body>
+</html>

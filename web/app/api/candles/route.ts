@@ -13,18 +13,24 @@ import { NextResponse } from "next/server";
  * client, sidesteps CORS, and lets the edge cache absorb repeat requests.
  */
 
+import { MARKETS } from "@/lib/markets";
+
 const PYTH = "https://benchmarks.pyth.network/v1/shims/tradingview/history";
-const FEED = process.env.NEXT_PUBLIC_PYTH_SYMBOL ?? "Crypto.BTC/USD";
+const DEFAULT_FEED = process.env.NEXT_PUBLIC_PYTH_SYMBOL ?? "Crypto.BTC/USD";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const resolution = url.searchParams.get("resolution") ?? "5";
+  // Whitelisted against the registry — this proxy serves our markets only.
+  const requested = url.searchParams.get("symbol");
+  const symbol =
+    requested && MARKETS.some((m) => m.pythSymbol === requested) ? requested : DEFAULT_FEED;
   const to = Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000));
   const from = Number(url.searchParams.get("from") ?? to - 60 * 60 * 24);
 
   try {
     const r = await fetch(
-      `${PYTH}?symbol=${encodeURIComponent(FEED)}&resolution=${resolution}&from=${from}&to=${to}`,
+      `${PYTH}?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}`,
       { next: { revalidate: 15 } }
     );
     if (!r.ok) throw new Error(`upstream ${r.status}`);

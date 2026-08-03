@@ -4,9 +4,12 @@ import { memo, useEffect, useRef, useState } from "react";
 
 /** Our markets, mapped to TradingView's symbols. */
 const SYMBOLS: Record<string, string> = {
-  "BTC-PERP": "PYTH:BTCUSD",
-  "ETH-PERP": "PYTH:ETHUSD",
-  "SOL-PERP": "PYTH:SOLUSD",
+  // Exchange listings rather than PYTH:* — the raw Pyth symbols render with
+  // eight decimals on TradingView's axis, which reads like a bug. The venue
+  // tab remains the Pyth-pure view; this one is for chart tooling.
+  "BTC-PERP": "COINBASE:BTCUSD",
+  "SOL-PERP": "COINBASE:SOLUSD",
+  "ETH-PERP": "COINBASE:ETHUSD",
 };
 
 /**
@@ -65,13 +68,16 @@ export const TradingViewChart = memo(function TradingViewChart({
     script.async = true;
     script.innerHTML = JSON.stringify({
       autosize: true,
-      symbol: SYMBOLS[market] ?? "PYTH:BTCUSD",
+      symbol: SYMBOLS[market] ?? "COINBASE:BTCUSD",
       interval,
       timezone: "Etc/UTC",
       theme: "dark",
       style: "1", // candles
       locale: "en",
-      backgroundColor: "rgba(0,0,0,0)",
+      // A real color, not transparent: the widget derives its legend/text
+      // contrast from this, and "transparent" reads as light — black text
+      // on our black panel.
+      backgroundColor: "#0e0f12",
       gridColor: "rgba(35,40,51,0.35)",
       hide_top_toolbar: false,
       hide_legend: false,

@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Badge } from "./ui";
-import { ticksToUsd } from "@/lib/anqa";
+import { lotFraction, ticksToUsd } from "@/lib/anqa";
+import { useTickFlash, useTweened } from "@/lib/useLive";
 import type { Anqa } from "@/lib/useAnqa";
 
 /**
@@ -23,7 +24,7 @@ export function OrderBook({ anqa }: { anqa: Anqa }) {
   const tick = anqa.market?.tickSize ?? 1;
 
   return (
-    <section className="flex flex-col min-h-0 bg-ink border border-line-soft rounded-lg overflow-hidden">
+    <section className="flex flex-col h-full min-h-0 bg-ink border border-line-soft rounded-lg overflow-hidden">
       <header className="flex items-center shrink-0 h-9 border-b border-line-soft">
         {(["book", "trades"] as const).map((t) => (
           <button
@@ -51,8 +52,10 @@ export function OrderBook({ anqa }: { anqa: Anqa }) {
 }
 
 function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
-  const px = (t: any) => ticksToUsd(Number(t.toString()), tick);
-  const mark = anqa.markPrice === null ? null : anqa.markPrice / 1e6;
+  // Book prices and the mark are per lot; the trader reads per BTC.
+  const frac = lotFraction(anqa.market);
+  const px = (t: any) => ticksToUsd(Number(t.toString()), tick) / frac;
+  const mark = anqa.markPrice === null ? null : anqa.markPrice / 1e6 / frac;
 
   const asks = [...anqa.myAsks].sort(
     (a, b) => Number(a.priceInTicks.toString()) - Number(b.priceInTicks.toString())
@@ -76,18 +79,13 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* asks, worst at top so the spread sits in the middle */}
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col-reverse">
-          <Rows rows={asks} hidden={anqa.hiddenAsks} side="ask" px={px} maxLots={maxLots} />
+          <Rows rows={asks} hidden={anqa.hiddenAsks} side="ask" px={px} maxLots={maxLots} frac={frac} />
         </div>
 
-        <div className="shrink-0 flex items-center justify-between px-3 py-1.5 border-y border-line-soft bg-surface/40">
-          <span className="tnum text-[13px] font-medium text-phoenix">
-            {mark === null ? "—" : mark.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>
-          <span className="text-[10px] text-dim">mark</span>
-        </div>
+        <MidMark mark={mark} />
 
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <Rows rows={bids} hidden={anqa.hiddenBids} side="bid" px={px} maxLots={maxLots} />
+          <Rows rows={bids} hidden={anqa.hiddenBids} side="bid" px={px} maxLots={maxLots} frac={frac} />
         </div>
       </div>
 
@@ -100,18 +98,39 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
   );
 }
 
+/** The number in the middle of the book: glides, and flashes its direction. */
+function MidMark({ mark }: { mark: number | null }) {
+  const shown = useTweened(mark);
+  const flash = useTickFlash(mark);
+  return (
+    <div className="shrink-0 flex items-center justify-between px-3 py-2 border-y border-line-soft bg-surface/60">
+      <span
+        key={flash.key}
+        className={`tnum text-[15px] font-semibold leading-none px-1 -mx-1 ${
+          flash.dir === "up" ? "text-bid flash-up" : flash.dir === "down" ? "text-ask flash-down" : "text-phoenix"
+        }`}
+      >
+        {shown === null ? "—" : shown.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </span>
+      <span className="text-[9px] uppercase tracking-[0.1em] text-dim">mark</span>
+    </div>
+  );
+}
+
 function Rows({
   rows,
   hidden,
   side,
   px,
   maxLots,
+  frac,
 }: {
   rows: any[];
   hidden: number;
   side: "bid" | "ask";
   px: (t: any) => number;
   maxLots: number;
+  frac: number;
 }) {
   const tone = side === "bid" ? "text-bid" : "text-ask";
   const bar = side === "bid" ? "bg-bid/12" : "bg-ask/12";
@@ -124,16 +143,24 @@ function Rows({
         const lots = Number(o.baseLots.toString());
         running += lots;
         return (
-          <div key={i} className="relative grid grid-cols-3 px-3 py-[3px] text-[11px]">
+          <div
+            key={o.seq?.toString() ?? i}
+            className="relative grid grid-cols-3 px-3 py-[3px] text-[11px] row-hover row-in"
+          >
             <div
-              className={`absolute inset-y-0 right-0 ${bar}`}
+              className={`absolute inset-y-0 right-0 depth-bar ${bar}`}
               style={{ width: `${Math.min(100, (lots / maxLots) * 100)}%` }}
             />
-            <span className={`relative tnum ${tone}`}>
+            <span className={`relative tnum font-medium ${tone}`}>
               {px(o.priceInTicks).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
-            <span className="relative tnum text-right text-text">{lots}</span>
-            <span className="relative tnum text-right text-phoenix/90">yours</span>
+            <span className="relative tnum text-right text-text">
+              {(lots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+            </span>
+            <span className="relative tnum text-right text-muted">
+              {(running * frac).toLocaleString(undefined, { maximumFractionDigits: 3 })}
+              <span className="text-phoenix/80 ml-1 text-[9px]">yours</span>
+            </span>
           </div>
         );
       })}
@@ -154,6 +181,7 @@ function Rows({
 }
 
 function TradesView({ anqa, tick }: { anqa: Anqa; tick: any }) {
+  const frac = lotFraction(anqa.market);
   return (
     <>
       <div className="grid grid-cols-3 shrink-0 px-3 py-1.5 text-[10px] uppercase tracking-[0.08em] text-dim border-b border-line-soft">
@@ -169,14 +197,16 @@ function TradesView({ anqa, tick }: { anqa: Anqa; tick: any }) {
             </p>
           </div>
         ) : (
-          anqa.tape.map((p) => (
-            <div key={p.seq} className="grid grid-cols-3 px-3 py-[3px] text-[11px]">
+          anqa.tape.map((p, i) => (
+            <div key={p.seq} className={`grid grid-cols-3 px-3 py-[3px] text-[11px] ${i === 0 ? "print-in" : ""}`}>
               <span className="tnum text-bright">
-                {ticksToUsd(p.priceInTicks, tick).toLocaleString(undefined, {
+                {(ticksToUsd(p.priceInTicks, tick) / frac).toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                 })}
               </span>
-              <span className="tnum text-right text-muted">{p.baseLots}</span>
+              <span className="tnum text-right text-muted">
+                {(p.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              </span>
               <span className="tnum text-right text-dim">
                 {new Date(p.timestamp * 1000).toLocaleTimeString(undefined, {
                   hour: "2-digit",

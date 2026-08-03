@@ -37,21 +37,38 @@ function pda(tag: string, extra: Buffer[] = [], marketId: BN = MARKET_ID) {
   )[0];
 }
 
-/** Every account the terminal touches, derived once. */
-export function anqaAccounts(marketId: BN = MARKET_ID) {
+/** Every account the terminal touches, derived once.
+ *
+ * Two scopes: per-market accounts (book, oracles, tape) key on the market's
+ * id; everything that carries value or risk — vault, risk engine, portfolio,
+ * ledger, receipts — keys on the **group** id, because cross-margin means one
+ * of each serves every market in the hub. */
+export function anqaAccounts(marketId: BN = MARKET_ID, groupId: BN = marketId) {
   return {
+    /** The hub's id — portfolio/permission instructions that take a raw id
+     *  must be given this, never the traded market's id. */
+    groupId,
+    /** The group's own market account (id == group id), for instructions
+     *  that pair a market with group-seeded PDAs. */
+    groupMarket: pda("anqa_market", [], groupId),
     market: pda("anqa_market", [], marketId),
     book: pda("anqa_book", [], marketId),
-    riskGroup: pda("anqa_risk", [], marketId),
-    assetSlots: pda("anqa_assets", [], marketId),
+    riskGroup: pda("anqa_risk", [], groupId),
+    assetSlots: pda("anqa_assets", [], groupId),
     oracleState: pda("anqa_oracle", [], marketId),
     internalOracle: pda("anqa_int_oracle", [], marketId),
-    vault: pda("anqa_vault", [], marketId),
+    vault: pda("anqa_vault", [], groupId),
     tape: pda("anqa_tape", [], marketId),
-    portfolioOf: (owner: PublicKey) => pda("anqa_portfolio", [owner.toBuffer()], marketId),
-    ledgerOf: (owner: PublicKey) => pda("anqa_ledger", [owner.toBuffer()], marketId),
-    depositReceiptOf: (owner: PublicKey) => pda("anqa_dreceipt", [owner.toBuffer()], marketId),
-    withdrawReceiptOf: (owner: PublicKey) => pda("anqa_wreceipt", [owner.toBuffer()], marketId),
+    // One account for the whole venue — the trader's deposit ledger. Every
+    // market trades from it; isolation lives in the per-position collateral
+    // recorded inside it, not in separate accounts.
+    portfolioOf: (owner: PublicKey) => pda("anqa_portfolio", [owner.toBuffer()], groupId),
+    // Platform-wide: one session grant per owner, every market honours it.
+    sessionOf: (owner: PublicKey) =>
+      PublicKey.findProgramAddressSync([seed("anqa_session"), owner.toBuffer()], PROGRAM_ID)[0],
+    ledgerOf: (owner: PublicKey) => pda("anqa_ledger", [owner.toBuffer()], groupId),
+    depositReceiptOf: (owner: PublicKey) => pda("anqa_dreceipt", [owner.toBuffer()], groupId),
+    withdrawReceiptOf: (owner: PublicKey) => pda("anqa_wreceipt", [owner.toBuffer()], groupId),
     permissionOf: (account: PublicKey) =>
       PublicKey.findProgramAddressSync([seed("permission:"), account.toBuffer()], ACL)[0],
     delegationOf: (account: PublicKey) => ({
@@ -112,6 +129,21 @@ export function usd(
 /** Book prices are tick counts; the mark is quote atoms. */
 export function ticksToUsd(ticks: number | BN, tickSize: number | BN): number {
   return (Number(ticks.toString()) * Number(tickSize.toString())) / 10 ** QUOTE_DECIMALS;
+}
+
+/**
+ * The fraction of one whole base asset that a single lot represents.
+ *
+ * The venue speaks lots end to end — book sizes, kernel positions, the mark
+ * itself is quote atoms **per lot**. Humans think in whole bitcoins. This one
+ * number converts between the two worlds: divide a per-lot price by it for
+ * display, multiply a per-asset price by it before talking to the chain.
+ */
+export function lotFraction(market: any): number {
+  const size = Number(market?.baseLotSize?.toString() ?? 1);
+  const dec = Number(market?.baseDecimals ?? 0);
+  const frac = size / 10 ** dec;
+  return frac > 0 ? frac : 1;
 }
 
 export function usdToTicks(price: number, tickSize: number | BN): number {
@@ -199,6 +231,9 @@ export function readTriggers(triggers: TriggerSlot[]) {
       limitTicks: leBytesToBN(t.limitPriceInTicks),
       maxLots: leBytesToBN(t.maxBaseLots),
       direction: t.direction === 0 ? ("above" as const) : ("below" as const),
+      // Which market's position this trigger protects — the Orders tab is
+      // global, so every row must name its market.
+      assetIndex: t.assetIndex,
     }));
 }
 
@@ -212,5 +247,9 @@ export function readableError(e: any): string {
   if (msg.includes("User rejected")) return "Rejected in wallet";
   if (msg.includes("insufficient lamports") || msg.includes("Attempt to debit"))
     return "Not enough devnet SOL for rent";
+  // The rollup RPC's shape for "the transaction failed on execution" — most
+  // often an IoC order or close that found an empty book side to cross.
+  if (msg.includes("Unknown action"))
+    return "Nothing to fill — the book side you need is empty. Depth re-quotes within seconds; try again.";
   return msg.length > 120 ? msg.slice(0, 120) + "…" : msg;
 }

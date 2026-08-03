@@ -1,0 +1,281 @@
+"use client";
+
+/**
+ * The money model, in one file.
+ *
+ * One account per trader — the deposit ledger — and every market trades from
+ * it. Isolation is **per position**, not per account: the program records the
+ * collateral behind each asset's position (`Portfolio::asset_collateral`) and
+ * the isolated liquidator closes a position the moment that amount is spent.
+ * So a trader's balance funds many positions, and no one position can reach
+ * past the collateral it was opened with.
+ *
+ * Money lives in two places, and this file is the only thing that moves it:
+ *
+ *   wallet USDC  ──deposit──▶  the account  ──withdraw──▶  wallet USDC
+ *                                  │
+ *                                  └─ committed per position at open,
+ *                                     released back on close
+ */
+
+import { BN, Program } from "@coral-xyz/anchor";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Connection, PublicKey } from "@solana/web3.js";
+import {
+  authorizeWithdraw,
+  claimDeposit,
+  closePosition,
+  requestWithdraw,
+  settleWithdraw,
+  setupMarket,
+} from "./actions";
+import { equity, readKernel } from "./portfolio";
+import type { AnqaAccounts } from "./anqa";
+
+export type MoneyCtx = {
+  acc: AnqaAccounts;
+  marketId: BN;
+  owner: PublicKey;
+  engine: PublicKey;
+  trader?: PublicKey;
+  session?: PublicKey | null;
+};
+
+/** USDC sitting in the trader's own wallet — the venue never touches it. */
+export async function walletUsdc(
+  conn: Connection,
+  mint: PublicKey,
+  owner: PublicKey
+): Promise<number> {
+  const ata = getAssociatedTokenAddressSync(mint, owner);
+  return conn
+    .getTokenAccountBalance(ata)
+    .then((b) => Number(b.value.amount) / 1e6)
+    .catch(() => 0);
+}
+
+/**
+ * Collateral standing behind this market — capital plus unrealised PnL, the
+ * same number the kernel liquidates against. Reads the rollup, because that
+ * is where a delegated account is current.
+ */
+export async function collateralOf(
+  p: Program,
+  c: MoneyCtx
+): Promise<number> {
+  try {
+    const pf: any = await (p as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
+    return Number(equity(readKernel(pf.inner))) / 1e6;
+  } catch {
+    return 0;
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Money already deposited on base but not yet credited inside the rollup.
+ *
+ * The ledger only grows and the account remembers the high-water mark it has
+ * absorbed, so the difference is a deposit in flight. Checking it before
+ * asking for another is what stops a failed claim from turning every click
+ * into a fresh transfer — the bug that charged a trader twice for one
+ * deposit.
+ */
+export async function uncredited(
+  base: Program,
+  er: Program | null,
+  c: MoneyCtx
+): Promise<number> {
+  try {
+    const ledger: any = await (base as any).account.userDepositLedger.fetch(
+      c.acc.ledgerOf(c.owner)
+    );
+    const deposited = Number(ledger.deposited.toString()) / 1e6;
+    const pf: any = await ((er ?? base) as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
+    const claimed = Number(new BN(pf.claimedHighWater, 10, "le").toString()) / 1e6;
+    return Math.max(0, deposited - claimed);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Make sure the account can put `usd` behind a position, creating it on the
+ * way if this is the trader's first trade.
+ *
+ * Tops up from the wallet when the balance is short; never trims, because the
+ * balance funds every market and other positions may be leaning on it.
+ *
+ * One wallet signature covers everything the market still needs — account,
+ * delegation into the rollup, the session grant and the deposit itself — so
+ * a new market never demands a separate ceremony. The claim that credits the
+ * rollup is session-signed and costs no prompt.
+ *
+ * Returns the collateral actually standing behind the market afterwards.
+ */
+export async function fundMarket(
+  base: Program,
+  er: Program | null,
+  c: MoneyCtx,
+  args: {
+    usd: number;
+    mint: PublicKey;
+    sessionKey: PublicKey;
+    sessionPda: PublicKey;
+    need: { open: boolean; delegate: boolean; grant: boolean };
+    /** Base-layer connection — required to give collateral back. */
+    conn?: Connection;
+    onStep?: (s: string) => void;
+  }
+): Promise<number> {
+  const { usd, mint, sessionKey, sessionPda, need, onStep } = args;
+  const claim = async () => {
+    if (!er) return;
+    try {
+      await claimDeposit(er, { ...c, trader: sessionKey, session: sessionPda });
+    } catch {
+      // nothing to claim, or the grant is not visible in the rollup yet
+    }
+  };
+
+  // Pull in anything already paid for before asking for more money: a deposit
+  // whose claim has not landed is still the trader's, and depositing again
+  // would take a second bite out of their wallet for the same collateral.
+  if (!need.open && (await uncredited(base, er, c)) > 1) {
+    onStep?.("Crediting deposit");
+    for (let i = 0; i < 5; i++) {
+      await claim();
+      if ((await collateralOf(er ?? base, c)) >= usd - 1) break;
+      await sleep(1500);
+    }
+  }
+
+  const already = await collateralOf(er ?? base, c);
+  const shortfall = usd - already;
+
+  // Nothing to move and nothing to create: the market is ready as it stands.
+  if (shortfall <= 1 && !need.open && !need.delegate && !need.grant) return already;
+
+  onStep?.(need.open ? "Opening account" : "Funding account");
+  await setupMarket(base, c, {
+    mint,
+    depositAtoms: new BN(Math.max(0, Math.round(shortfall * 1e6))),
+    sessionKey,
+    durationSecs: new BN(24 * 60 * 60),
+    need: { ...need, deposit: shortfall > 1 },
+  });
+
+  if (shortfall <= 1) return already;
+
+  // The deposit lands on base; the rollup credits it when the session key
+  // drives the claim. Poll until the collateral shows up inside the rollup.
+  onStep?.("Crediting margin");
+  for (let i = 0; i < 10; i++) {
+    await sleep(2000);
+    await claim();
+    const now = await collateralOf(er ?? base, c);
+    if (now >= usd - 1) return now;
+  }
+  // The tokens are safe on base either way — the ledger records them and the
+  // claim is permissionless, so say so rather than leaving a silent gap.
+  const settled = await collateralOf(er ?? base, c);
+  if (settled < usd - 1) {
+    throw new Error(
+      "Deposit landed but the rollup credit is lagging — it will appear shortly; do not deposit again"
+    );
+  }
+  return settled;
+}
+
+/**
+ * Take `usd` of collateral out of this market and back to the wallet.
+ *
+ * Three legs across two layers, in order: reserve on base, let the kernel
+ * rule on it inside the rollup, then pay out once the receipt comes home.
+ * The trader signs only the first — the rest is permissionless.
+ */
+export async function defundMarket(
+  base: Program,
+  er: Program,
+  c: MoneyCtx,
+  args: { usd: number; mint: PublicKey; conn: Connection; onStep?: (s: string) => void }
+): Promise<void> {
+  const { usd, mint, conn, onStep } = args;
+  if (usd <= 0.01) return;
+
+  onStep?.("Returning collateral");
+  await requestWithdraw(base, c, mint, new BN(Math.round(usd * 1e6)));
+  await authorizeWithdraw(er, c);
+
+  // The receipt is delegated while the verdict is pending; once it is back
+  // under the program on base, the signerless settle can pay out.
+  const receipt = c.acc.withdrawReceiptOf(c.owner);
+  for (let i = 0; i < 40; i++) {
+    await sleep(2500);
+    const info = await conn.getAccountInfo(receipt);
+    if (!info) return; // already settled and closed
+    if (info.owner.equals((base as any).programId)) {
+      await settleWithdraw(base, c, mint);
+      return;
+    }
+  }
+  throw new Error("Withdrawal is taking longer than usual — check Balances in a moment");
+}
+
+/**
+ * Close a position and return its collateral to the wallet.
+ *
+ * Closing alone would leave the collateral sitting in the market's account,
+ * where it would silently become the next position's margin — the one thing
+ * this model must never allow. So the sweep is part of closing, not a chore
+ * left to the trader.
+ *
+ * The close itself is session-signed and instant; returning the money is one
+ * wallet signature, the same as any withdrawal.
+ */
+export async function closeAndSweep(
+  trading: Program,
+  base: Program,
+  er: Program,
+  c: MoneyCtx,
+  args: {
+    worstPriceInTicks: BN;
+    mint: PublicKey;
+    conn: Connection;
+    assetIndex: number;
+    onStep?: (s: string) => void;
+  }
+): Promise<void> {
+  const { worstPriceInTicks, mint, conn, assetIndex, onStep } = args;
+
+  onStep?.("Closing");
+  await closePosition(trading, c, worstPriceInTicks, new BN(0), []);
+
+  // A dark-market close queues a fill for the engine; the position is not
+  // gone until that settles. Wait for flat before asking for the money back,
+  // or the kernel will rightly refuse to release margin it still needs.
+  onStep?.("Settling");
+  let flat = false;
+  for (let i = 0; i < 24; i++) {
+    await sleep(2500);
+    try {
+      const pf: any = await (er as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
+      const k = readKernel(pf.inner);
+      if (!k.positions.some((x) => x.assetIndex === assetIndex)) {
+        flat = true;
+        break;
+      }
+    } catch {
+      // transient read — keep waiting
+    }
+  }
+  if (!flat) {
+    throw new Error("Position closed; collateral returns once the fill settles");
+  }
+
+  const left = await collateralOf(er, c);
+  if (left > 0.01) {
+    await defundMarket(base, er, c, { usd: left, mint, conn, onStep });
+  }
+}

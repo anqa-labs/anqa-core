@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnchorProvider, BN, Program, type Idl } from "@coral-xyz/anchor";
 import { useAnchorWallet } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { keypairWallet, sessionKeypair } from "./session";
+import { DEFAULT_MARKET_ID, marketById } from "./markets";
 import idl from "./anqa_core.json";
 import { readOpenInterest } from "./portfolio";
 import {
@@ -48,6 +50,8 @@ export type VenueState = {
   portfolio: any | null;
   ledger: any | null;
   triggers: ReturnType<typeof readTriggers>;
+  /** The on-chain session grant for this owner, if one exists. */
+  grant: { sessionKey: string; expiresAt: number } | null;
   loading: boolean;
   error: string | null;
 };
@@ -68,6 +72,7 @@ const EMPTY: VenueState = {
   portfolio: null,
   ledger: null,
   triggers: [],
+  grant: null,
   loading: true,
   error: null,
 };
@@ -79,12 +84,21 @@ const EMPTY: VenueState = {
  * a delegated account only answers from inside, an undelegated one only from
  * outside, and the terminal should not care which phase the venue is in.
  */
-export function useAnqa(pollMs = 1500) {
+export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
   const wallet = useAnchorWallet();
   const [state, setState] = useState<VenueState>(EMPTY);
   const busy = useRef(false);
 
-  const acc = useMemo(() => anqaAccounts(MARKET_ID), []);
+  const marketBN = useMemo(() => new BN(mid), [mid]);
+  const groupBN = useMemo(() => new BN(marketById(mid).groupId), [mid]);
+  const acc = useMemo(() => anqaAccounts(marketBN, groupBN), [marketBN, groupBN]);
+
+  // A market switch is a hard context change: wipe the view and the cached
+  // base-layer picture rather than briefly showing the old market's numbers.
+  useEffect(() => {
+    setState(EMPTY);
+    baseCache.current = null;
+  }, [mid]);
   const conns = useMemo(
     () => ({
       base: new Connection(BASE_RPC, "confirmed"),
@@ -117,7 +131,9 @@ export function useAnqa(pollMs = 1500) {
       if (!wallet) return null;
       return new AnchorProvider(conns[layer], wallet, {
         commitment: "confirmed",
-        skipPreflight: false,
+        // The rollup validates on execution; preflight against it only adds
+        // a round-trip and a second chance to fail. Base keeps preflight.
+        skipPreflight: layer === "er",
       });
     },
     [conns, wallet]
@@ -131,53 +147,112 @@ export function useAnqa(pollMs = 1500) {
     [providerFor]
   );
 
-  const refresh = useCallback(async () => {
+  /**
+   * The slow-changing base-layer picture, cached between full refreshes.
+   *
+   * Prices, the book and PnL tick every second and live in the rollup, whose
+   * RPC tolerates that. Market config, delegation flags and the ledger live
+   * on the public devnet endpoint, which rate-limits at a handful of
+   * requests per second — so the fast loop reuses this cache and only a
+   * periodic full refresh (or an explicit one after an action) re-reads it.
+   */
+  const baseCache = useRef<{
+    mid: number;
+    owner: string | null;
+    market: any;
+    delegated: boolean;
+    portfolioDelegated: boolean;
+    ledger: any;
+    pfBaseInfo: any;
+    grant: { sessionKey: string; expiresAt: number } | null;
+  } | null>(null);
+
+  const refresh = useCallback(async (opts?: { fast?: boolean }) => {
     if (busy.current) return;
     busy.current = true;
     try {
       const owner = wallet?.publicKey ?? null;
+      const ownerKey = owner?.toBase58() ?? null;
 
-      // Market config is base-resident by design.
-      const market = await programs.base.account.market
-        .fetch(acc.market)
-        .catch(() => null);
+      // One batched read per layer, not one RPC call per account. The public
+      // devnet endpoint rate-limits at a handful of requests per second, and
+      // a terminal that polls politely is the difference between live data
+      // and a console full of 429s.
+      const coder = programs.base.coder.accounts;
+      const dec = (name: string, info: { data: Buffer } | null | undefined) => {
+        if (!info) return null;
+        try {
+          return coder.decode(name, info.data);
+        } catch {
+          return null;
+        }
+      };
 
-      // Is the book delegated? Its base-layer owner answers that.
-      const bookInfo = await conns.base.getAccountInfo(acc.book).catch(() => null);
-      const delegated = bookInfo?.owner?.equals(DLP) ?? false;
-      const live = delegated ? programs.er : programs.base;
+      const pfKey = owner ? acc.portfolioOf(owner) : null;
+      const full =
+        !opts?.fast ||
+        !baseCache.current ||
+        baseCache.current.owner !== ownerKey ||
+        baseCache.current.mid !== mid;
 
-      const [oracle, book, tapeAcct, slotsInfo] = await Promise.all([
-        live.account.oracleState.fetch(acc.oracleState).catch(() => null),
-        live.account.book.fetch(acc.book).catch(() => null),
-        live.account.fillTape.fetch(acc.tape).catch(() => null),
-        // Raw bytes: the kernel's engine slot is opaque to Anchor, and the
-        // one field worth publishing is aggregate open interest.
-        (delegated ? conns.er : conns.base).getAccountInfo(acc.assetSlots).catch(() => null),
-      ]);
+      if (full) {
+        const baseKeys = [
+          acc.market,
+          acc.book,
+          ...(owner ? [pfKey!, acc.ledgerOf(owner!), acc.sessionOf(owner!)] : []),
+        ];
+        const baseInfos = await conns.base
+          .getMultipleAccountsInfo(baseKeys)
+          .catch(() => baseKeys.map(() => null));
+        const [marketInfo, bookBaseInfo, pfBaseInfo, ledgerInfo, sessionInfo] = baseInfos;
+        const grantAcct = owner ? dec("tradeSession", sessionInfo) : null;
+        baseCache.current = {
+          mid,
+          owner: ownerKey,
+          // Market config is base-resident by design.
+          market: dec("market", marketInfo),
+          // Is the book delegated? Its base-layer owner answers that.
+          delegated: bookBaseInfo?.owner?.equals(DLP) ?? false,
+          // The portfolio answers from whichever side currently owns it.
+          portfolioDelegated: pfBaseInfo?.owner?.equals(DLP) ?? false,
+          ledger: owner ? dec("userDepositLedger", ledgerInfo) : null,
+          pfBaseInfo,
+          grant: grantAcct
+            ? {
+                sessionKey: grantAcct.sessionKey.toBase58(),
+                expiresAt: Number(grantAcct.expiresAt.toString()),
+              }
+            : null,
+        };
+      }
+      const { market, delegated, portfolioDelegated, ledger, pfBaseInfo, grant } = baseCache.current!;
 
+      const liveConn = delegated ? conns.er : conns.base;
+      const liveKeys = [acc.oracleState, acc.book, acc.tape, acc.assetSlots];
+      if (owner && portfolioDelegated && delegated) liveKeys.push(pfKey!);
+      const liveInfos = await liveConn
+        .getMultipleAccountsInfo(liveKeys)
+        .catch(() => liveKeys.map(() => null));
+      const [oracleInfo, bookLiveInfo, tapeInfo, slotsInfo, pfErInfo] = liveInfos;
+
+      const oracle = dec("oracleState", oracleInfo);
+      const book = dec("book", bookLiveInfo);
+      const tapeAcct = dec("fillTape", tapeInfo);
+
+      // Raw bytes: the kernel's engine slot is opaque to Anchor, and the
+      // one field worth publishing is aggregate open interest.
       const openInterest = slotsInfo ? readOpenInterest(slotsInfo.data) : null;
 
-      let portfolio: any = null;
-      let ledger: any = null;
-      let portfolioDelegated = false;
-      if (owner) {
-        const pfKey = acc.portfolioOf(owner);
-        const [pfInfo, l] = await Promise.all([
-          conns.base.getAccountInfo(pfKey).catch(() => null),
-          programs.base.account.userDepositLedger
-            .fetch(acc.ledgerOf(owner))
-            .catch(() => null),
-        ]);
-        ledger = l;
-        // The portfolio answers from whichever side currently owns it.
-        portfolioDelegated = pfInfo?.owner?.equals(DLP) ?? false;
-        if (pfInfo) {
-          portfolio = await (portfolioDelegated ? programs.er : programs.base).account.portfolio
-            .fetch(pfKey)
-            .catch(() => null);
-        }
-      }
+      // A delegated portfolio under an undelegated book is the rare
+      // in-between; it pays for the one extra read it actually needs.
+      const pfInfo = !owner
+        ? null
+        : !portfolioDelegated
+          ? pfBaseInfo
+          : delegated
+            ? pfErInfo
+            : await conns.er.getAccountInfo(pfKey!).catch(() => null);
+      const portfolio = dec("portfolio", pfInfo);
 
       // Split what we can read into "mine" and "someone's, but not mine".
       // On a lit market we see everything; on a dark one the book itself is
@@ -212,6 +287,7 @@ export function useAnqa(pollMs = 1500) {
         portfolio,
         ledger,
         triggers: portfolio ? readTriggers((portfolio as any).triggers) : [],
+        grant,
         loading: false,
         error: null,
       });
@@ -220,15 +296,83 @@ export function useAnqa(pollMs = 1500) {
     } finally {
       busy.current = false;
     }
-  }, [acc, conns, programs, wallet]);
+  }, [acc, conns, programs, wallet, mid]);
 
   useEffect(() => {
+    // Fast ticks ride the rollup RPC alone; every eighth tick re-reads the
+    // slow base-layer picture too. Explicit refresh() calls (after an
+    // action) are always full.
+    let n = 0;
     refresh();
-    const t = setInterval(refresh, pollMs);
+    const t = setInterval(() => {
+      n += 1;
+      refresh(n % 8 === 0 ? undefined : { fast: true });
+    }, pollMs);
     return () => clearInterval(t);
   }, [refresh, pollMs]);
 
-  return { ...state, refresh, acc, conns, programFor, wallet, marketId: MARKET_ID };
+  /** The browser-held key that signs trades once the owner grants it. */
+  const sessionKp = useMemo(
+    () => (wallet ? sessionKeypair(wallet.publicKey) : null),
+    [wallet]
+  );
+
+  /** Is one-click trading live: on-chain grant matches our key and is fresh? */
+  const sessionActive =
+    !!sessionKp &&
+    !!state.grant &&
+    state.grant.sessionKey === sessionKp.publicKey.toBase58() &&
+    state.grant.expiresAt > Date.now() / 1000 + 60;
+
+  /** Session-signed rollup program, regardless of whether the grant is
+   *  visible in state yet — for the claim that immediately follows a grant. */
+  const sessionProgram = useCallback(() => {
+    if (!sessionKp) return null;
+    return new Program(
+      idl as Idl,
+      new AnchorProvider(conns.er, keypairWallet(sessionKp) as never, {
+        commitment: "confirmed",
+        skipPreflight: true,
+      })
+    ) as any as Program;
+  }, [sessionKp, conns]);
+
+  /** The program trading calls go through: session-signed when live (no
+   *  wallet prompt), the wallet otherwise. */
+  const programForTrading = useCallback(() => {
+    if (sessionActive && sessionKp) {
+      return new Program(
+        idl as Idl,
+        new AnchorProvider(conns.er, keypairWallet(sessionKp) as never, {
+          commitment: "confirmed",
+          skipPreflight: true,
+        })
+      ) as any as Program;
+    }
+    return programFor("er");
+  }, [sessionActive, sessionKp, conns, programFor]);
+
+  /** Spread into a trading ctx to route signing through the session key. */
+  const tradeExtra =
+    sessionActive && sessionKp && wallet
+      ? { trader: sessionKp.publicKey, session: acc.sessionOf(wallet.publicKey) }
+      : {};
+
+  return {
+    ...state,
+    refresh,
+    acc,
+    conns,
+    programFor,
+    wallet,
+    marketId: marketBN,
+    marketInfo: marketById(mid),
+    sessionKp,
+    sessionActive,
+    sessionProgram,
+    programForTrading,
+    tradeExtra,
+  };
 }
 
 export type Anqa = ReturnType<typeof useAnqa>;
