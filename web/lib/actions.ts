@@ -623,12 +623,29 @@ export async function undelegatePortfolio(p: Program, c: Ctx) {
  * Runs inside the rollup — the permission record can only be made there — and
  * is idempotent enough to retry, since a second call simply finds the record.
  */
-export async function setPortfolioPrivate(p: Program, c: Ctx) {
-  const portfolio = c.acc.portfolioOf(c.owner);
-  const permission = PublicKey.findProgramAddressSync(
-    [Buffer.from("permission:"), portfolio.toBuffer()],
+export function permissionOf(account: PublicKey) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("permission:"), account.toBuffer()],
     ACL_PROGRAM
   )[0];
+}
+
+/**
+ * Does this account already carry a permission record?
+ *
+ * One rollup read. Accounts opened before the venue started hiding them have
+ * none, and would otherwise stay readable forever — the record is created
+ * once, not on every trade, so asking is what makes this self-limiting.
+ */
+export async function portfolioIsPrivate(p: Program, c: Ctx): Promise<boolean> {
+  const rec = permissionOf(c.acc.portfolioOf(c.owner));
+  const info = await p.provider.connection.getAccountInfo(rec).catch(() => null);
+  return !!info;
+}
+
+export async function setPortfolioPrivate(p: Program, c: Ctx) {
+  const portfolio = c.acc.portfolioOf(c.owner);
+  const permission = permissionOf(portfolio);
   return p.methods
     .setPortfolioPrivate([
       { pubkey: c.owner, flags: 31 },

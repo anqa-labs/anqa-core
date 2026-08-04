@@ -29,6 +29,7 @@ import {
   settleWithdraw,
   setupMarket,
   setPortfolioPrivate,
+  portfolioIsPrivate,
 } from "./actions";
 import { equity, readKernel } from "./portfolio";
 import type { AnqaAccounts } from "./anqa";
@@ -201,8 +202,12 @@ export async function fundMarket(
   // failing the trade over it would be the wrong trade-off. The proof panel
   // reports the truth either way, so nobody is told they are private when they
   // are not.
-  if (need.open || need.delegate) {
-    if (er) {
+  // Not gated on "just created": an account opened before the venue started
+  // hiding them would otherwise stay readable forever. Ask the rollup whether
+  // the record exists — it is created once, so this asks once and then never
+  // again.
+  if (er && !(await portfolioIsPrivate(er, c).catch(() => true))) {
+    {
       await Promise.race([
         setPortfolioPrivate(er, c).catch(() => {}),
         sleep(5000),
