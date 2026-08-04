@@ -306,6 +306,18 @@ export async function claimDeposit(p: Program, c: Ctx) {
  * sequencer, so once it has processed the order there is nothing further to
  * wait for.
  */
+
+/** MagicBlock's permission program, and the TEE validator that enforces it. */
+const ACL_PROGRAM = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
+const TEE_VALIDATOR = new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
+/** Rent for permission records comes from the validator's fee vault. */
+const MAGIC_FEE_VAULT = PublicKey.findProgramAddressSync(
+  [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()],
+  DLP
+)[0];
+/** The venue's engine — see `setPortfolioPrivate` for why it must be a member. */
+const VENUE_KEEPER = new PublicKey("A1iQJhg25EPc8VwXXngJ58GwVJAsCzsMnt2ybSu93yvD");
+
 const ROLLUP: ConfirmOptions = {
   commitment: "processed",
   preflightCommitment: "processed",
@@ -585,4 +597,51 @@ export async function undelegatePortfolio(p: Program, c: Ctx) {
       magicContext: MAGIC_CONTEXT,
     })
     .rpc();
+}
+
+/**
+ * Hide a trader's own account: position, entry, collateral — and therefore the
+ * price at which they would be liquidated.
+ *
+ * This is the half of the privacy that costs nobody anything. No taker needs
+ * to read a stranger's position to size their own trade, and it is what every
+ * other perp venue gives away, which is why liquidation hunting is a sport.
+ *
+ * Two members, and the second one is a limitation worth stating plainly:
+ *
+ * - the **owner**, who must sign — the seeds bind this to them, so nobody can
+ *   hide or expose somebody else's account
+ * - the **keeper**, because the engine that marks positions to market,
+ *   liquidates the underwater ones and credits deposits has to be able to read
+ *   them. Lock it out and liquidations silently stop firing on live leverage,
+ *   which is worse than the exposure it was meant to fix.
+ *
+ * So the position is hidden from every other trader and from anyone scanning
+ * the rollup. It is not hidden from the venue's own engine. That exception is
+ * the only one; on every other venue the whole book is the exception.
+ *
+ * Runs inside the rollup — the permission record can only be made there — and
+ * is idempotent enough to retry, since a second call simply finds the record.
+ */
+export async function setPortfolioPrivate(p: Program, c: Ctx) {
+  const portfolio = c.acc.portfolioOf(c.owner);
+  const permission = PublicKey.findProgramAddressSync(
+    [Buffer.from("permission:"), portfolio.toBuffer()],
+    ACL_PROGRAM
+  )[0];
+  return p.methods
+    .setPortfolioPrivate([
+      { pubkey: c.owner, flags: 31 },
+      { pubkey: VENUE_KEEPER, flags: 31 },
+    ])
+    .accounts({
+      owner: c.owner,
+      portfolio,
+      market: c.acc.market,
+      permission,
+      vault: MAGIC_FEE_VAULT,
+      magicProgram: MAGIC_PROGRAM,
+      permissionProgram: ACL_PROGRAM,
+    } as never)
+    .rpc(ROLLUP);
 }

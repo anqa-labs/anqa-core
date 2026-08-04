@@ -28,6 +28,7 @@ import {
   requestWithdraw,
   settleWithdraw,
   setupMarket,
+  setPortfolioPrivate,
 } from "./actions";
 import { equity, readKernel } from "./portfolio";
 import type { AnqaAccounts } from "./anqa";
@@ -189,6 +190,25 @@ export async function fundMarket(
     durationSecs: new BN(24 * 60 * 60),
     need: { ...need, deposit: shortfall > 1 },
   });
+
+  // The moment the account exists inside the rollup, hide it. Position, entry,
+  // collateral and therefore the liquidation price become the owner's alone —
+  // this is the half of the privacy a dark book does not provide on its own,
+  // and leaving it until later means every account opened in the meantime
+  // traded in the clear.
+  //
+  // Best-effort: a venue that cannot hide the account is still a venue, and
+  // failing the trade over it would be the wrong trade-off. The proof panel
+  // reports the truth either way, so nobody is told they are private when they
+  // are not.
+  if (need.open || need.delegate) {
+    if (er) {
+      await Promise.race([
+        setPortfolioPrivate(er, c).catch(() => {}),
+        sleep(5000),
+      ]);
+    }
+  }
 
   if (shortfall <= 1) return already;
 
