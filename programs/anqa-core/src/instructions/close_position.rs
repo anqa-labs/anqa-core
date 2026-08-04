@@ -223,6 +223,7 @@ fn close_inner<'info>(
             close_lots,
             trader,
             u64::MAX, // reserved client id for protocol-initiated closes
+            false,    // IOC rests nothing, so there is nothing to hide
         )?;
         let n = book.fill_count;
         (fills, resting, n)

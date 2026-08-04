@@ -80,9 +80,18 @@ pub fn handler<'info>(
     base_lots: u64,
     client_order_id: u64,
     collateral_usd: u128,
+    hidden: bool,
 ) -> Result<()> {
     let market = &ctx.accounts.market;
     require!(!market.paused, AnqaError::MarketPaused);
+    // Hiding only conceals anything on a dark market, and this is a correctness
+    // check rather than a policy one. The flag is honoured by `walk_prices`,
+    // which builds the depth mirror — so it withholds an order from the
+    // *mirror*, not from the book. Where the book account itself is readable,
+    // the order and its owner are readable with it and the flag conceals
+    // nothing. Refuse rather than rest an order the trader believes is hidden
+    // and is not.
+    require!(!hidden || market.dark, AnqaError::HiddenOrdersNotAllowed);
 
     // Isolated margin: the trader states what stands behind this market's
     // position, and that is the only money it can lose. The kernel pools
@@ -173,6 +182,7 @@ pub fn handler<'info>(
             base_lots,
             trader_key,
             client_order_id,
+            hidden,
         )?;
         let n = book.fill_count;
         (fills, resting, rested, n)
@@ -390,7 +400,14 @@ pub fn handler<'info>(
                 .side_mut(side)
                 .evict_worst()
                 .ok_or(AnqaError::BookSideFull)?;
-            book.rest(side, trader_key, client_order_id, price_in_ticks, resting)?;
+            book.rest(
+                side,
+                trader_key,
+                client_order_id,
+                price_in_ticks,
+                resting,
+                hidden,
+            )?;
             evicted
         };
 

@@ -343,6 +343,10 @@ export async function placeOrder(
     /** Collateral to stand behind this market's position, quote atoms.
      *  Isolated margin: this is the whole risk of the resulting position. */
     collateralAtoms?: BN;
+    /** Withhold whatever rests from the public depth ladder. The order keeps
+     *  its price-time priority and prints to the tape when it fills — it is
+     *  invisible beforehand, not privileged. Dark markets only. */
+    hidden?: boolean;
     makers?: PublicKey[];
   }
 ) {
@@ -355,7 +359,8 @@ export async function placeOrder(
       args.priceInTicks,
       args.baseLots,
       args.clientOrderId,
-      args.collateralAtoms ?? new BN(0)
+      args.collateralAtoms ?? new BN(0),
+      args.hidden ?? false
     )
     // Crossing several book levels costs more compute than the 200k default.
     .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])

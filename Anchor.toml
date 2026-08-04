@@ -6,11 +6,11 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-anqa_core = "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
-
 [programs.devnet]
-anqa_core = "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+anqa_core = "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
+
+[programs.localnet]
+anqa_core = "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
 
 [registry]
 url = "https://api.apr.dev"
@@ -19,11 +19,16 @@ url = "https://api.apr.dev"
 cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
-# MagicBlock ephemeral rollup endpoints (devnet).
-# Regional ER validators; the TEE validator (private ER) requires an auth token:
-#   https://devnet-tee.magicblock.app?token=${token}
-[test.validator]
-url = "https://api.devnet.solana.com"
-
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+[test]
+startup_wait = 5000
+shutdown_wait = 2000
+upgradeable = false
+
+[test.validator]
+bind_address = "0.0.0.0"
+url = "https://api.devnet.solana.com"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899

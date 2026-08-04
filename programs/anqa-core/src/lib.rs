@@ -3,10 +3,23 @@
 //! A perpetuals DEX whose order book lives inside a Private Ephemeral Rollup.
 //!
 //! The book is a Phoenix-style central limit order book — strict price-time
-//! priority, FIFO order identifiers, crankless execution — with one difference
-//! that defines the product: it is **delegated into a TEE-backed rollup**, so
-//! resting depth is invisible to everyone, including the operator. Only fills
-//! reach the public tape.
+//! priority, FIFO order identifiers, crankless execution — delegated into a
+//! rollup and marked private, so the book account is not served to callers
+//! outside its permission set. What the public sees instead is the depth
+//! mirror (aggregate size per price, no owners) and the fill tape.
+//!
+//! **What that is and is not.** Concealment here is a read filter at RPC
+//! ingress, enforced by the validator's query filtering service against an
+//! ephemeral permission record. Orders are stored as plaintext; they are
+//! withheld, not encrypted. The operator running the validator executes the
+//! matching code and therefore sees every resting order, its owner and its
+//! queue position in the clear. The trust model is a venue's, bounded later by
+//! attestation — not a cryptographic one. Nothing in this program verifies an
+//! enclave quote.
+//!
+//! Within that model, a trader may additionally mark an order `hidden`, which
+//! withholds it from the depth mirror while leaving its priority, its matching
+//! and its tape print untouched.
 //!
 //! Layout:
 //! - `state::market` — market configuration (base layer, never delegated)
@@ -32,7 +45,7 @@ use instructions::*;
 use instructions::place_multiple::QuoteParams;
 use state::{OracleKind, OracleParams, OrderType, Side, TriggerDirection};
 
-declare_id!("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+declare_id!("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
 
 #[ephemeral]
 #[program]
@@ -177,6 +190,51 @@ pub mod anqa_core {
     /// publishes totals per price level and never who placed them.
     pub fn publish_depth(ctx: Context<PublishDepth>) -> Result<()> {
         instructions::publish_depth::publish_handler(ctx)
+    }
+
+    /// Base layer: create a trader's private mirror of their own resting
+    /// orders. The book is unreadable to them by design, so this is how a
+    /// trader sees what they left on it.
+    pub fn initialize_trader_orders(
+        ctx: Context<InitializeTraderOrders>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::trader_orders::initialize_handler(ctx, market_id)
+    }
+
+    /// Base layer: record who may read a trader's order mirror. Must run
+    /// before delegation and before the rollup-side hide — the ephemeral
+    /// permission extends this record rather than creating one.
+    pub fn create_trader_orders_permission(
+        ctx: Context<CreateTraderOrdersPermission>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::trader_orders::create_permission_handler(ctx, market_id)
+    }
+
+    /// Delegate a trader's order mirror into the rollup, beside the book it
+    /// projects.
+    pub fn delegate_trader_orders(
+        ctx: Context<DelegateTraderOrders>,
+        market_id: u64,
+    ) -> Result<()> {
+        instructions::trader_orders::delegate_handler(ctx, market_id)
+    }
+
+    /// Hide a trader's order mirror from everyone but its owner. Without this
+    /// the mirrors would collectively undo the dark book.
+    /// Permissionless: the member list is fixed by the program to the owner
+    /// and the venue engine, so a caller gains nothing by driving it — which
+    /// is what lets the engine provision mirrors without a trader signature.
+    pub fn set_trader_orders_private(ctx: Context<SetTraderOrdersPrivate>) -> Result<()> {
+        instructions::trader_orders::set_private_handler(ctx)
+    }
+
+    /// Rollup: rebuild one trader's mirror from the book. Permissionless —
+    /// the seeds fix whose rows are copied, and the caller cannot read the
+    /// account they just wrote.
+    pub fn publish_trader_orders(ctx: Context<PublishTraderOrders>) -> Result<()> {
+        instructions::trader_orders::publish_handler(ctx)
     }
 
     /// Base layer: create the collateral vault. Never delegated to the rollup.
@@ -402,6 +460,11 @@ pub mod anqa_core {
     /// Place an order. Crosses the resting book, then rests the remainder; every
     /// fill is handed to the risk kernel, which may refuse it.
     ///
+    /// `hidden` withholds whatever rests from the published depth mirror. It
+    /// changes nothing else: the order keeps its price-time place in the same
+    /// queue, crosses on the same terms, and prints to the same public tape
+    /// when it fills. Dark markets only.
+    ///
     /// `remaining_accounts`: one `Portfolio` per maker this order may cross.
     pub fn place_order<'info>(
         ctx: Context<'_, '_, 'info, 'info, PlaceOrder<'info>>,
@@ -411,6 +474,7 @@ pub mod anqa_core {
         base_lots: u64,
         client_order_id: u64,
         collateral_usd: u128,
+        hidden: bool,
     ) -> Result<()> {
         instructions::place_order::handler(
             ctx,
@@ -420,6 +484,7 @@ pub mod anqa_core {
             base_lots,
             client_order_id,
             collateral_usd,
+            hidden,
         )
     }
 

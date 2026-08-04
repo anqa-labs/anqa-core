@@ -88,6 +88,8 @@ pub enum AnqaError {
     TriggerNotArmed,
     #[msg("asset slots account is not prepared to its full size")]
     AssetSlotsNotPrepared,
+    #[msg("this market is not dark; a hidden order would conceal nothing here")]
+    HiddenOrdersNotAllowed,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

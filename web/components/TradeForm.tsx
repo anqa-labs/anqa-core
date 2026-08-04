@@ -57,6 +57,12 @@ export function TradeForm({
   /** Time in force for limit orders. GTC and post-only rest on the book;
    *  IOC and FOK execute-or-die and never rest. Market mode is always IOC. */
   const [tif, setTif] = useState<"gtc" | "postOnly" | "ioc" | "fok">("gtc");
+  const [hidden, setHidden] = useState(false);
+  /** Only an order that rests can be hidden: hiding withholds size from the
+   *  public ladder, and an order that fills on arrival was never on it. Market
+   *  mode and IOC/FOK therefore cannot hide. Computed here rather than at
+   *  submit time because the control needs it too. */
+  const canRest = type === "limit" && (tif === "gtc" || tif === "postOnly");
   const [tpslOpen, setTpslOpen] = useState(false);
   const [tp, setTp] = useState("");
   const [sl, setSl] = useState("");
@@ -280,7 +286,6 @@ export function TradeForm({
     // A market order still needs a bound; cross the band, not the universe.
     const limit = type === "market" ? (side === "bid" ? effPrice * 1.02 : effPrice * 0.98) : Number(price);
     // May this order rest on the book? Only GTC and post-only limit orders.
-    const canRest = type === "limit" && (tif === "gtc" || tif === "postOnly");
     setBusy("Collateral");
     try {
       // Make sure the account can cover this position's collateral —
@@ -319,6 +324,9 @@ export function TradeForm({
         // Isolated margin: what this position may lose, recorded on-chain
         // beside it and enforced by the isolated liquidator.
         collateralAtoms: new BN(Math.round(payUsd * 1e6)),
+        // Only an order that rests can be hidden; there is nothing to withhold
+        // from the ladder when the whole order crosses on arrival.
+        hidden: hidden && canRest,
         makers: [], // dark: name nobody
       });
       const wantStops = tpslOpen && (tpN > 0 || slN > 0);
@@ -657,6 +665,59 @@ export function TradeForm({
                   : tif === "ioc"
                     ? "fills now, rest discarded"
                     : "all or nothing, now"}
+            </span>
+          </div>
+        )}
+
+        {/* Shown on every dark market, including where it cannot be used. An
+            order that fills on arrival has nothing to withhold from the ladder,
+            but hiding the control taught nobody that — so it stays visible and
+            disabled, and says why. */}
+        {anqa.market?.dark && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-[0.08em] text-dim">Visibility</span>
+            <div className="flex items-center p-0.5 bg-void border border-line rounded-md">
+              {(
+                [
+                  [false, "Shown"],
+                  [true, "Hidden"],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    // Asking to hide a market order is not a mistake to refuse —
+                    // it is a request for the only order that *can* be hidden.
+                    // So the control converts the ticket instead of scolding:
+                    // limit at the mark, good-till-cancelled, hidden.
+                    if (v && !canRest) {
+                      setType("limit");
+                      setTif("gtc");
+                      if (!price && mark !== null) setPrice(mark.toFixed(2));
+                    }
+                    setHidden(v);
+                  }}
+                  title={
+                    v
+                      ? canRest
+                        ? "Hidden — kept off the public ladder. Same queue position, same fills; it appears on the tape once it trades."
+                        : "Hidden needs an order that rests — this switches you to a limit order at the mark"
+                      : "Shown — counted in the public depth at your price"
+                  }
+                  className={`h-6 px-2 text-[10px] font-medium rounded transition-colors ${
+                    hidden === v && canRest ? "bg-raised text-bright" : "text-dim hover:text-text"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-dim">
+              {!canRest
+                ? "market fills on arrival — tap Hidden to rest instead"
+                : hidden
+                  ? "off the ladder until it fills"
+                  : "adds to public depth"}
             </span>
           </div>
         )}

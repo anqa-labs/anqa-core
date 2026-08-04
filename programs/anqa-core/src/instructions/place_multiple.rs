@@ -33,6 +33,10 @@ pub struct QuoteParams {
     pub price_in_ticks: u64,
     pub base_lots: u64,
     pub client_order_id: u64,
+    /// Withhold this rung from the published depth mirror. Per-quote rather
+    /// than per-batch, so a maker can show a ladder and hide size inside it —
+    /// the usual reason to want this at all.
+    pub hidden: bool,
 }
 
 #[derive(Accounts)]
@@ -69,6 +73,13 @@ pub struct PlaceMultiple<'info> {
 pub fn handler(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<()> {
     let market = &ctx.accounts.market;
     require!(!market.paused, AnqaError::MarketPaused);
+    // Same rule as `place_order`: hiding an order only conceals it where the
+    // book itself is unreadable. Refusing the whole batch matches this path's
+    // existing all-or-nothing posture.
+    require!(
+        market.dark || quotes.iter().all(|q| !q.hidden),
+        AnqaError::HiddenOrdersNotAllowed
+    );
     require!(!quotes.is_empty(), AnqaError::InvalidSize);
     require!(quotes.len() <= MAX_BATCH_ORDERS, AnqaError::TooManyAccounts);
 
@@ -130,6 +141,7 @@ pub fn handler(ctx: Context<PlaceMultiple>, quotes: Vec<QuoteParams>) -> Result<
                 q.base_lots,
                 trader,
                 q.client_order_id,
+                q.hidden,
             )?;
             require!(fills.is_empty(), AnqaError::PostOnlyWouldCross);
             require!(resting == q.base_lots, AnqaError::PostOnlyWouldCross);

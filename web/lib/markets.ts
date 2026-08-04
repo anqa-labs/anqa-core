@@ -36,15 +36,15 @@ export type MarketInfo = {
 };
 
 /**
- * Hub 910's shared collateral mint (from `app/.demo-mint-910.json`).
+ * Hub 920's shared collateral mint (from `app/.demo-mint-920.json`).
  *
  * This tracks GROUP — a stale mint here points the terminal at the right
  * markets with the wrong collateral, which fails at deposit rather than at
  * load, so it is worth changing both in the same edit.
  */
-const HUB_MINT = "9kv7WRLJbqbwph6RfdL1FDNJvbWsviz4D3x6f8c5BQSB";
+const HUB_MINT = "2kSiLu2FUwskEpqMZUBSS98udt1J9mvorL8WEH7kaeUi";
 
-const GROUP = 910;
+const GROUP = 920;
 
 export const MARKETS: MarketInfo[] = [
   {

@@ -10,6 +10,8 @@ pub const SEAT_SEED: &[u8] = b"anqa_seat";
 /// The book's public face: totals per price level, no owners. Unpermissioned
 /// on purpose — see `state::depth`.
 pub const DEPTH_SEED: &[u8] = b"anqa_depth";
+/// Per-trader projection of the book: the owner's own resting orders.
+pub const TRADER_ORDERS_SEED: &[u8] = b"anqa_myorders";
 
 /// The venue's own monotonic clock, one per risk group.
 pub const CLOCK_SEED: &[u8] = b"anqa_clock";

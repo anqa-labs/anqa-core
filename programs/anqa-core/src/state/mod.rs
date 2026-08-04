@@ -10,6 +10,7 @@ pub mod oracle;
 pub mod risk;
 pub mod session;
 pub mod tape;
+pub mod trader_orders;
 pub mod venue_clock;
 
 pub use book::*;
@@ -24,4 +25,5 @@ pub use oracle::*;
 pub use risk::*;
 pub use session::*;
 pub use tape::*;
+pub use trader_orders::*;
 pub use venue_clock::*;

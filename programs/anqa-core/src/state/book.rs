@@ -88,7 +88,16 @@ pub struct RestingOrder {
     pub next: u16,
     /// 1 when this slot holds a live order.
     pub active: u8,
-    pub _pad: [u8; 5],
+    /// 1 when this order is withheld from the published depth mirror.
+    ///
+    /// A hidden order is hidden and nothing else. It rests in this same arena,
+    /// in this same priority list, and crosses on exactly the same terms as a
+    /// displayed one — the flag is read only by `walk_prices`, which builds the
+    /// public ladder. Taken from the slot's own padding, so the struct is still
+    /// 72 bytes and every account written before this field existed decodes
+    /// with `hidden == 0`.
+    pub hidden: u8,
+    pub _pad: [u8; 4],
 }
 
 /// What a match produced. Ephemeral — returned to the instruction layer, which
@@ -118,12 +127,27 @@ pub struct BookSide {
 }
 
 impl BookSide {
-    /// Walk live orders best-first, yielding `(price_in_ticks, base_lots)`.
+    /// Walk **displayed** live orders best-first, yielding
+    /// `(price_in_ticks, base_lots)`.
     ///
-    /// Deliberately drops the owner and the order id: this is what feeds the
-    /// public depth mirror, and the whole point is that nothing identifying
-    /// leaves the book.
+    /// Two things are dropped here, for two different reasons. The owner and
+    /// the order id go because the mirror is aggregate by construction and
+    /// nothing identifying may leave the book. Orders flagged `hidden` go
+    /// because their owner asked for that specifically — they still rest, still
+    /// hold queue priority, and still fill; they simply do not appear in the
+    /// ladder or in the totals derived from it.
+    ///
+    /// This is the only place the flag is honoured, which is what keeps hidden
+    /// orders indistinguishable from displayed ones everywhere that matters.
+    /// Use `walk_all` for anything the engine needs to be true.
     pub fn walk_prices(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        self.walk_all().filter(|(_, _, hidden)| *hidden == 0)
+            .map(|(price, lots, _)| (price, lots))
+    }
+
+    /// Walk every live order best-first, hidden ones included, yielding
+    /// `(price_in_ticks, base_lots, hidden)`. The engine's view of the book.
+    pub fn walk_all(&self) -> impl Iterator<Item = (u64, u64, u8)> + '_ {
         let mut cursor = self.head;
         let mut guard = 0usize;
         core::iter::from_fn(move || {
@@ -132,7 +156,7 @@ impl BookSide {
                 let o = &self.orders[cursor as usize];
                 cursor = o.next;
                 if o.active == 1 {
-                    return Some((o.price_in_ticks, o.base_lots));
+                    return Some((o.price_in_ticks, o.base_lots, o.hidden));
                 }
             }
             None
@@ -156,7 +180,8 @@ impl BookSide {
                     NIL
                 },
                 active: 0,
-                _pad: [0; 5],
+                hidden: 0,
+                _pad: [0; 4],
             };
         }
         self.free_head = 0;
@@ -205,12 +230,19 @@ impl BookSide {
             trader: Pubkey::default(),
             next: self.free_head,
             active: 0,
-            _pad: [0; 5],
+            hidden: 0,
+            _pad: [0; 4],
         };
         self.free_head = slot;
     }
 
     /// Insert into priority position. Walks the live list; O(depth), no movement.
+    ///
+    /// `hidden` reaches the slot and stops there. Priority is decided by
+    /// `ranks_ahead` — price, then arrival sequence — which never reads the
+    /// flag, so a hidden order takes precisely the queue position its price and
+    /// time earn it. There is no display priority here, by choice: a hidden
+    /// order that arrived first is filled first.
     pub fn insert(
         &mut self,
         side: Side,
@@ -219,6 +251,7 @@ impl BookSide {
         price_in_ticks: u64,
         base_lots: u64,
         seq: u64,
+        hidden: bool,
     ) -> Result<u16> {
         let slot = self.alloc_slot()?;
         self.orders[slot as usize] = RestingOrder {
@@ -229,7 +262,8 @@ impl BookSide {
             trader,
             next: NIL,
             active: 1,
-            _pad: [0; 5],
+            hidden: u8::from(hidden),
+            _pad: [0; 4],
         };
 
         if self.head == NIL || self.ranks_ahead(side, price_in_ticks, seq, self.head) {
@@ -294,13 +328,18 @@ impl BookSide {
         Err(AnqaError::OrderNotFound.into())
     }
 
-    /// Locate an order by owner and client id, returning `(price, lots)`.
-    pub fn find_order(&self, trader: &Pubkey, client_order_id: u64) -> Option<(u64, u64)> {
+    /// Locate an order by owner and client id, returning
+    /// `(price, lots, hidden)`.
+    ///
+    /// The flag is returned because an amendment re-posts the order, and an
+    /// amendment must never be the reason a trader's concealment quietly
+    /// lapses: whoever rebuilds the order carries it forward.
+    pub fn find_order(&self, trader: &Pubkey, client_order_id: u64) -> Option<(u64, u64, bool)> {
         let mut cursor = self.head;
         while cursor != NIL {
             let o = self.orders[cursor as usize];
             if o.active == 1 && o.trader == *trader && o.client_order_id == client_order_id {
-                return Some((o.price_in_ticks, o.base_lots));
+                return Some((o.price_in_ticks, o.base_lots, o.hidden == 1));
             }
             cursor = o.next;
         }
@@ -612,10 +651,18 @@ impl Book {
         client_order_id: u64,
         price_in_ticks: u64,
         base_lots: u64,
+        hidden: bool,
     ) -> Result<()> {
         let seq = self.next_seq();
-        self.side_mut(side)
-            .insert(side, trader, client_order_id, price_in_ticks, base_lots, seq)?;
+        self.side_mut(side).insert(
+            side,
+            trader,
+            client_order_id,
+            price_in_ticks,
+            base_lots,
+            seq,
+            hidden,
+        )?;
         Ok(())
     }
 
@@ -626,6 +673,9 @@ impl Book {
     /// the book, and the caller decides between eviction and refusal. Fills are
     /// priced at the **maker's** price — the resting order named its terms and
     /// time priority earns it.
+    /// `hidden` applies only to the remainder that rests. The crossing half of
+    /// an order is never displayed in the first place — it is gone before the
+    /// mirror is next rebuilt — and it prints on the public tape either way.
     pub fn place(
         &mut self,
         side: Side,
@@ -634,6 +684,7 @@ impl Book {
         base_lots: u64,
         trader: Pubkey,
         client_order_id: u64,
+        hidden: bool,
     ) -> Result<(Vec<FillRecord>, u64, bool)> {
         require!(limit_price > 0, AnqaError::InvalidPrice);
         require!(base_lots > 0, AnqaError::InvalidSize);
@@ -715,8 +766,15 @@ impl Book {
                 rested = false;
             } else {
                 let seq = self.next_seq();
-                self.side_mut(side)
-                    .insert(side, trader, client_order_id, limit_price, remaining, seq)?;
+                self.side_mut(side).insert(
+                    side,
+                    trader,
+                    client_order_id,
+                    limit_price,
+                    remaining,
+                    seq,
+                    hidden,
+                )?;
             }
         } else {
             remaining = 0;
@@ -737,7 +795,7 @@ mod tests {
         book.init(1, 255);
         for i in 0..ORDERS_PER_SIDE as u64 {
             let (fills, resting, rested) = book
-                .place(Side::Bid, OrderType::Limit, 100 + i, 10, Pubkey::new_unique(), i)
+                .place(Side::Bid, OrderType::Limit, 100 + i, 10, Pubkey::new_unique(), i, false)
                 .unwrap();
             assert!(fills.is_empty());
             assert_eq!(resting, 10);
@@ -751,7 +809,7 @@ mod tests {
     fn full_side_reports_not_rested_and_keeps_the_book_intact() {
         let mut book = full_bid_book();
         let (fills, resting, rested) = book
-            .place(Side::Bid, OrderType::Limit, 500, 10, Pubkey::new_unique(), 99)
+            .place(Side::Bid, OrderType::Limit, 500, 10, Pubkey::new_unique(), 99, false)
             .unwrap();
         assert!(fills.is_empty());
         assert_eq!(resting, 10);
@@ -772,7 +830,8 @@ mod tests {
         assert_eq!(book.bids.count as usize, ORDERS_PER_SIDE - 1);
 
         // The freed slot is immediately reusable, and priority order held.
-        book.rest(Side::Bid, Pubkey::new_unique(), 7, 500, 5).unwrap();
+        book.rest(Side::Bid, Pubkey::new_unique(), 7, 500, 5, false)
+            .unwrap();
         assert!(book.bids.is_full());
         assert_eq!(book.bids.best().unwrap().price_in_ticks, 500);
         assert_eq!(book.bids.worst().unwrap().price_in_ticks, 101);
@@ -787,5 +846,87 @@ mod tests {
         assert!(!book.outranks_worst(Side::Bid, 99));
         // An empty side outranks trivially (nothing to evict, but nothing blocks).
         assert!(book.outranks_worst(Side::Ask, 1));
+    }
+
+    fn empty_book() -> Box<Book> {
+        let mut book: Box<Book> = Box::new(Book::zeroed());
+        book.init(1, 255);
+        book
+    }
+
+    #[test]
+    fn hidden_orders_are_absent_from_the_published_ladder() {
+        let mut book = empty_book();
+        book.place(Side::Bid, OrderType::Limit, 100, 7, Pubkey::new_unique(), 1, false)
+            .unwrap();
+        book.place(Side::Bid, OrderType::Limit, 99, 5, Pubkey::new_unique(), 2, true)
+            .unwrap();
+
+        // Displayed: only the lit rung, and the totals agree with it.
+        let shown: Vec<_> = book.bids.walk_prices().collect();
+        assert_eq!(shown, vec![(100, 7)]);
+
+        // The engine still sees both, in price order.
+        let all: Vec<_> = book.bids.walk_all().collect();
+        assert_eq!(all, vec![(100, 7, 0), (99, 5, 1)]);
+    }
+
+    #[test]
+    fn a_hidden_order_still_fills() {
+        let mut book = empty_book();
+        let maker = Pubkey::new_unique();
+        book.place(Side::Ask, OrderType::Limit, 100, 10, maker, 1, true)
+            .unwrap();
+        // Nothing on the ladder for a taker to aim at...
+        assert_eq!(book.asks.walk_prices().count(), 0);
+
+        // ...yet crossing it works exactly as if it were displayed.
+        let (fills, resting, _) = book
+            .place(Side::Bid, OrderType::Limit, 100, 4, Pubkey::new_unique(), 2, false)
+            .unwrap();
+        assert_eq!(fills.len(), 1);
+        assert_eq!(fills[0].maker, maker);
+        assert_eq!(fills[0].base_lots, 4);
+        assert_eq!(resting, 0);
+        // Partially consumed, so it remains — and remains hidden.
+        assert_eq!(book.asks.walk_all().collect::<Vec<_>>(), vec![(100, 6, 1)]);
+    }
+
+    #[test]
+    fn hiding_buys_no_priority_and_costs_none() {
+        let mut book = empty_book();
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        // Same price; the hidden order arrived first.
+        book.place(Side::Ask, OrderType::Limit, 100, 3, first, 1, true)
+            .unwrap();
+        book.place(Side::Ask, OrderType::Limit, 100, 3, second, 2, false)
+            .unwrap();
+
+        // Time priority is untouched by the flag: the hidden order fills first.
+        let (fills, _, _) = book
+            .place(Side::Bid, OrderType::Limit, 100, 6, Pubkey::new_unique(), 3, false)
+            .unwrap();
+        assert_eq!(fills.len(), 2);
+        assert_eq!(fills[0].maker, first);
+        assert_eq!(fills[1].maker, second);
+    }
+
+    #[test]
+    fn an_amended_order_stays_hidden() {
+        let mut book = empty_book();
+        let trader = Pubkey::new_unique();
+        book.place(Side::Bid, OrderType::Limit, 100, 10, trader, 1, true)
+            .unwrap();
+
+        // What `modify_order` does: read the flag, cancel, re-post carrying it.
+        let (_, _, was_hidden) = book.bids.find_order(&trader, 1).unwrap();
+        assert!(was_hidden);
+        book.bids.cancel(&trader, 1).unwrap();
+        book.place(Side::Bid, OrderType::PostOnly, 101, 8, trader, 1, was_hidden)
+            .unwrap();
+
+        assert_eq!(book.bids.walk_prices().count(), 0);
+        assert_eq!(book.bids.walk_all().collect::<Vec<_>>(), vec![(101, 8, 1)]);
     }
 }

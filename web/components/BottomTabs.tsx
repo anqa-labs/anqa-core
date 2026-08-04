@@ -431,7 +431,23 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                 })}{" "}
                 {o.market.base}
               </span>
-              <span className="text-phoenix/90 text-[10px]">{o.dark ? "hidden" : "visible"}</span>
+              {/* Two different kinds of unseen. On a dark market nobody can
+                  read the book, so no order names its owner — but a *shown*
+                  order still adds its size to the public ladder at its price,
+                  and a hidden one does not. That is the distinction the
+                  trader chose, so it is the one worth reporting. */}
+              <span
+                className={`text-[10px] ${o.hidden ? "text-phoenix" : "text-dim"}`}
+                title={
+                  o.hidden
+                    ? "Off the public ladder — nobody sees this size until it fills"
+                    : o.dark
+                      ? "Counted in the public depth at this price; the owner is still nobody's business"
+                      : "Publicly visible"
+                }
+              >
+                {o.hidden ? "hidden" : o.dark ? "on ladder" : "visible"}
+              </span>
               <span className="text-right">
                 <button
                   disabled={!!busy}

@@ -1,5 +1,5 @@
 {
-  "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j",
+  "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW",
   "metadata": {
     "name": "anqa_core",
     "version": "0.1.0",
@@ -2097,6 +2097,112 @@
       ]
     },
     {
+      "name": "create_trader_orders_permission",
+      "docs": [
+        "Base layer: record who may read a trader's order mirror. Must run",
+        "before delegation and before the rollup-side hide — the ephemeral",
+        "permission extends this record rather than creating one."
+      ],
+      "discriminator": [
+        115,
+        76,
+        189,
+        225,
+        240,
+        137,
+        165,
+        174
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orders",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  121,
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "delegate_asset_slots",
       "discriminator": [
         255,
@@ -2371,7 +2477,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -2567,7 +2673,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -2768,7 +2874,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -2965,7 +3071,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -3162,7 +3268,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -3373,7 +3479,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -3568,7 +3674,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -3763,7 +3869,217 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "delegate_trader_orders",
+      "docs": [
+        "Delegate a trader's order mirror into the rollup, beside the book it",
+        "projects."
+      ],
+      "discriminator": [
+        198,
+        201,
+        142,
+        14,
+        19,
+        91,
+        7,
+        62
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "buffer_orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "orders"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                57,
+                251,
+                5,
+                35,
+                107,
+                160,
+                114,
+                152,
+                75,
+                225,
+                111,
+                190,
+                235,
+                239,
+                12,
+                50,
+                63,
+                167,
+                42,
+                8,
+                239,
+                38,
+                174,
+                34,
+                7,
+                244,
+                227,
+                176,
+                245,
+                163,
+                36,
+                104
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "orders"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "orders"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  121,
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -3962,7 +4278,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -4160,7 +4476,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -5606,6 +5922,115 @@
       ]
     },
     {
+      "name": "initialize_trader_orders",
+      "docs": [
+        "Base layer: create a trader's private mirror of their own resting",
+        "orders. The book is unreadable to them by design, so this is how a",
+        "trader sees what they left on it."
+      ],
+      "discriminator": [
+        104,
+        212,
+        120,
+        242,
+        117,
+        225,
+        118,
+        17
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Whoever pays the rent. **Not** necessarily the owner: the engine",
+            "provisions these so a trader never has to sign for the privilege of",
+            "seeing their own orders."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "field, never an authority — creating someone's mirror grants the",
+            "creator nothing, since the permission below names the owner and the",
+            "venue engine and the caller has no say in either."
+          ]
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  121,
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initialize_vault",
       "docs": [
         "Base layer: create the collateral vault. Never delegated to the rollup."
@@ -6581,6 +7006,11 @@
         "Place an order. Crosses the resting book, then rests the remainder; every",
         "fill is handed to the risk kernel, which may refuse it.",
         "",
+        "`hidden` withholds whatever rests from the published depth mirror. It",
+        "changes nothing else: the order keeps its price-time place in the same",
+        "queue, crosses on the same terms, and prints to the same public tape",
+        "when it fills. Dark markets only.",
+        "",
         "`remaining_accounts`: one `Portfolio` per maker this order may cross."
       ],
       "discriminator": [
@@ -6798,6 +7228,10 @@
         {
           "name": "collateral_usd",
           "type": "u128"
+        },
+        {
+          "name": "hidden",
+          "type": "bool"
         }
       ]
     },
@@ -7280,6 +7714,127 @@
                 "kind": "account",
                 "path": "market.market_id",
                 "account": "Market"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "publish_trader_orders",
+      "docs": [
+        "Rollup: rebuild one trader's mirror from the book. Permissionless —",
+        "the seeds fix whose rows are copied, and the caller cannot read the",
+        "account they just wrote."
+      ],
+      "discriminator": [
+        71,
+        64,
+        29,
+        85,
+        211,
+        207,
+        132,
+        21
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Permissionless: the projection is fixed by the account's own seeds,",
+            "and the caller cannot read what they publish."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "book",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  98,
+                  111,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "orders",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  121,
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
               }
             ]
           }
@@ -7869,7 +8424,7 @@
         },
         {
           "name": "owner_program",
-          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+          "address": "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
         },
         {
           "name": "delegation_program",
@@ -8270,6 +8825,119 @@
           }
         }
       ]
+    },
+    {
+      "name": "set_trader_orders_private",
+      "docs": [
+        "Hide a trader's order mirror from everyone but its owner. Without this",
+        "the mirrors would collectively undo the dark book.",
+        "Permissionless: the member list is fixed by the program to the owner",
+        "and the venue engine, so a caller gains nothing by driving it — which",
+        "is what lets the engine provision mirrors without a trader signature."
+      ],
+      "discriminator": [
+        83,
+        35,
+        146,
+        224,
+        165,
+        201,
+        4,
+        213
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "owner"
+        },
+        {
+          "name": "orders",
+          "docs": [
+            "mirror that already belongs to the owner they named."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  121,
+                  111,
+                  114,
+                  100,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        }
+      ],
+      "args": []
     },
     {
       "name": "settle_fill",
@@ -9379,6 +10047,19 @@
       ]
     },
     {
+      "name": "TraderOrders",
+      "discriminator": [
+        45,
+        164,
+        102,
+        41,
+        22,
+        115,
+        52,
+        247
+      ]
+    },
+    {
       "name": "UserDepositLedger",
       "discriminator": [
         51,
@@ -9916,6 +10597,11 @@
       "code": 6041,
       "name": "AssetSlotsNotPrepared",
       "msg": "asset slots account is not prepared to its full size"
+    },
+    {
+      "code": 6042,
+      "name": "HiddenOrdersNotAllowed",
+      "msg": "this market is not dark; a hidden order would conceal nothing here"
     }
   ],
   "types": [
@@ -10116,8 +10802,9 @@
           {
             "name": "total_bid_lots",
             "docs": [
-              "Everything resting, including whatever sits past the published",
-              "levels — the venue's size, which is aggregate by definition."
+              "Every *displayed* lot, including whatever sits past the published",
+              "levels. Hidden orders are excluded here as well as from the ladder, so",
+              "this is the venue's visible size, not its true one."
             ],
             "type": "u64"
           },
@@ -10704,9 +11391,17 @@
           {
             "name": "dark",
             "docs": [
-              "Dark mode: the book is private and fills settle through the pending",
-              "queue (`settle_fill`) instead of inline — a taker on a dark market",
-              "cannot name the makers it crosses. Flipped by `set_dark` on base."
+              "Dark mode: the book account is private. Two things follow, and both are",
+              "consequences of the same fact rather than separate policies.",
+              "",
+              "1. Fills settle through the pending queue (`settle_fill`) instead of",
+              "inline — a taker who cannot read the book cannot name the makers it",
+              "crosses, so crossing and crediting decouple.",
+              "2. Orders may be placed `hidden`, i.e. withheld from the published depth",
+              "mirror. Only meaningful here: where the book is readable, so is every",
+              "order in it, and the flag would conceal nothing.",
+              "",
+              "Flipped by `set_dark` on base."
             ],
             "type": "bool"
           },
@@ -11575,6 +12270,15 @@
           {
             "name": "client_order_id",
             "type": "u64"
+          },
+          {
+            "name": "hidden",
+            "docs": [
+              "Withhold this rung from the published depth mirror. Per-quote rather",
+              "than per-batch, so a maker can show a ladder and hide size inside it —",
+              "the usual reason to want this at all."
+            ],
+            "type": "bool"
           }
         ]
       }
@@ -11626,11 +12330,25 @@
             "type": "u8"
           },
           {
+            "name": "hidden",
+            "docs": [
+              "1 when this order is withheld from the published depth mirror.",
+              "",
+              "A hidden order is hidden and nothing else. It rests in this same arena,",
+              "in this same priority list, and crosses on exactly the same terms as a",
+              "displayed one — the flag is read only by `walk_prices`, which builds the",
+              "public ladder. Taken from the slot's own padding, so the struct is still",
+              "72 bytes and every account written before this field existed decodes",
+              "with `hidden == 0`."
+            ],
+            "type": "u8"
+          },
+          {
             "name": "_pad",
             "type": {
               "array": [
                 "u8",
-                5
+                4
               ]
             }
           }
@@ -11754,6 +12472,135 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TraderOrderRow",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "client_order_id",
+            "type": "u64"
+          },
+          {
+            "name": "price_in_ticks",
+            "type": "u64"
+          },
+          {
+            "name": "base_lots",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "docs": [
+              "Arrival sequence — the \"time\" in price-time priority. Lets a client",
+              "show queue position without reading anyone else's order."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "side",
+            "docs": [
+              "0 = bid, 1 = ask."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "hidden",
+            "docs": [
+              "1 when this order is withheld from the public depth ladder."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TraderOrders",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "docs": [
+              "Bumped on every rebuild, so a client can tell a stale read from a",
+              "trader who simply has nothing resting."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "published_at",
+            "docs": [
+              "Unix time of the last rebuild, from the venue clock's host reading.",
+              "A row set that stopped updating is a keeper that stopped running, and",
+              "a trader should be able to tell that apart from an empty book."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "rows",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "TraderOrderRow"
+                  }
+                },
+                24
+              ]
+            }
+          },
+          {
+            "name": "count",
+            "type": "u8"
+          },
+          {
+            "name": "truncated",
+            "docs": [
+              "1 when the trader had more resting orders than `rows` can hold."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
           }
         ]
       }

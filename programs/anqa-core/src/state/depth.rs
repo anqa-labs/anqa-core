@@ -1,19 +1,22 @@
-//! Aggregate depth — what a dark book can publish without giving anyone away.
+//! The public ladder.
 //!
-//! The book itself stays unreadable: every resting order carries its owner,
-//! its exact size and its place in the queue, and that is precisely what a
-//! trader resting size is paying to hide.
+//! The book account itself is not served to outsiders, so this mirror is the
+//! venue's displayed market: totals per price level, no owners, no individual
+//! quantities. Hiding *how much is bid at a price* protects nobody — it is the
+//! one piece of opacity that costs the taker rather than the maker, and a
+//! taker who cannot size a trade goes somewhere they can. So this stays
+//! public and is rebuilt permissionlessly.
 //!
-//! But hiding *how much is bid at a price* protects nobody. It is the one
-//! piece of opacity that costs the taker rather than the maker: without it
-//! they cannot size a trade, and a taker who cannot size a trade goes
-//! somewhere they can. So the program keeps this mirror alongside the book —
-//! totals per price level, no owners, no individual quantities — and leaves
-//! it public.
+//! Two orders at one price are indistinguishable inside a level, which is the
+//! point. What a displayed level does not say is whose size it is, how it
+//! divides between orders, or where in the queue any of it sits.
 //!
-//! What stays private is what actually protects a trader: which order is
-//! theirs, how large it is on its own, what position they carry, and the
-//! price at which they would be liquidated.
+//! **Hidden orders do not appear here at all** — not in a level, not in the
+//! totals. That is the whole of what the flag does. Such an order still rests
+//! in the book, still holds its price-time priority, and still crosses; a
+//! taker simply cannot see it coming and learns of it from the fill tape,
+//! after the fact. So the ladder understates true resting size by design, and
+//! the totals below are honest only about what is *displayed*.
 
 use anchor_lang::prelude::*;
 
@@ -42,8 +45,9 @@ pub struct BookDepth {
     /// Best-first: `bids[0]` is the highest bid, `asks[0]` the lowest ask.
     pub bids: [DepthLevel; DEPTH_LEVELS],
     pub asks: [DepthLevel; DEPTH_LEVELS],
-    /// Everything resting, including whatever sits past the published
-    /// levels — the venue's size, which is aggregate by definition.
+    /// Every *displayed* lot, including whatever sits past the published
+    /// levels. Hidden orders are excluded here as well as from the ladder, so
+    /// this is the venue's visible size, not its true one.
     pub total_bid_lots: u64,
     pub total_ask_lots: u64,
     /// Levels actually populated on each side.

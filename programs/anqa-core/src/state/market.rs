@@ -40,9 +40,17 @@ pub struct Market {
     pub maker_rebate_bps: u16,
     /// Halts new orders while set; cancels remain allowed.
     pub paused: bool,
-    /// Dark mode: the book is private and fills settle through the pending
-    /// queue (`settle_fill`) instead of inline — a taker on a dark market
-    /// cannot name the makers it crosses. Flipped by `set_dark` on base.
+    /// Dark mode: the book account is private. Two things follow, and both are
+    /// consequences of the same fact rather than separate policies.
+    ///
+    /// 1. Fills settle through the pending queue (`settle_fill`) instead of
+    ///    inline — a taker who cannot read the book cannot name the makers it
+    ///    crosses, so crossing and crediting decouple.
+    /// 2. Orders may be placed `hidden`, i.e. withheld from the published depth
+    ///    mirror. Only meaningful here: where the book is readable, so is every
+    ///    order in it, and the flag would conceal nothing.
+    ///
+    /// Flipped by `set_dark` on base.
     pub dark: bool,
     /// Index of this market's asset inside the risk group's slot array.
     pub asset_index: u32,

@@ -39,7 +39,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+const PROGRAM_ID = new PublicKey("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const MAGIC_PROGRAM = new PublicKey("Magic11111111111111111111111111111111111111");
 const MAGIC_CONTEXT = new PublicKey("MagicContext1111111111111111111111111111111");

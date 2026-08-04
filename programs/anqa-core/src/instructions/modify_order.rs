@@ -79,8 +79,10 @@ pub fn handler(
 
     let trader = ctx.accounts.trader.key();
 
-    // Find the existing order so we know what we are changing from.
-    let (old_price, old_lots) = {
+    // Find the existing order so we know what we are changing from. `was_hidden`
+    // rides along: a re-post that dropped it would silently publish an order its
+    // owner had hidden, which is the one failure this path must not have.
+    let (old_price, old_lots, was_hidden) = {
         let book = ctx.accounts.book.load()?;
         book.side(side)
             .find_order(&trader, client_order_id)
@@ -106,6 +108,7 @@ pub fn handler(
                 new_base_lots,
                 trader,
                 client_order_id,
+                was_hidden,
             )?;
             // Post-only: an amendment that would cross is a mispricing. The
             // cancel above freed a slot on this side, so the re-post always

@@ -5,6 +5,7 @@ import { BN } from "@coral-xyz/anchor";
 import { Connection } from "@solana/web3.js";
 import { useAnchorWallet } from "@solana/wallet-adapter-react";
 import { anqaAccounts, ER_RPC } from "./anqa";
+import { cachedToken, rpcWithToken } from "./teeSession";
 import { collateralOfRaw, entryOfRaw, readKernel, PF_INNER } from "./portfolio";
 import { MARKETS, type MarketInfo } from "./markets";
 
@@ -55,7 +56,19 @@ export function useAllPositions(pollMs = 2000): CrossPosition[] {
       return;
     }
     const owner = wallet.publicKey;
-    const conn = new Connection(ER_RPC, "confirmed");
+    // Portfolios are private too, so the same rule as the book applies: read
+    // unauthenticated and the rollup answers `null`, which this hook cannot
+    // tell apart from "flat". Reuse the token `useAnqa` minted.
+    let token: string | null = null;
+    let conn = new Connection(rpcWithToken(ER_RPC, null), "confirmed");
+    const connect = () => {
+      const fresh = cachedToken(owner);
+      if (fresh !== token) {
+        token = fresh;
+        conn = new Connection(rpcWithToken(ER_RPC, token), "confirmed");
+      }
+      return conn;
+    };
     const perMarket = MARKETS.map((m) => anqaAccounts(new BN(m.id), new BN(m.groupId)));
     const account = perMarket[0].portfolioOf(owner);
     const oracleKeys = perMarket.map((a) => a.oracleState);
@@ -65,7 +78,7 @@ export function useAllPositions(pollMs = 2000): CrossPosition[] {
       if (busy.current) return;
       busy.current = true;
       try {
-        const infos = await conn.getMultipleAccountsInfo(keys);
+        const infos = await connect().getMultipleAccountsInfo(keys);
         const pfInfo = infos[0];
         if (!pfInfo) {
           setRows([]);

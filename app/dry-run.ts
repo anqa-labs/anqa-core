@@ -24,7 +24,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+const PROGRAM_ID = new PublicKey("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
 const DEVNET = "https://api.devnet.solana.com";
 
 // Market parameters — one BTC-PERP style market.

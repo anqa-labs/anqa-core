@@ -29,23 +29,30 @@ import { spawn } from "child_process";
 import bs58 from "bs58";
 import fs from "fs";
 import { teeRpcFor } from "./tee-auth";
-import { resolveFeedAccount } from "./feed";
 import os from "os";
 import path from "path";
 
-const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
-const BTC_FEED = new PublicKey(
-  process.env.ANQA_FEED_ACCT && process.env.ANQA_FEED_ACCT !== "auto"
-    ? process.env.ANQA_FEED_ACCT
-    : "4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo"
-);
+const PROGRAM_ID = new PublicKey("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
+// Delegation, permissions and the validator fee vault — the same constants
+// `provision-hub.ts` uses, needed here because the engine now stands up each
+// trader's order mirror itself rather than waiting for the trader to.
+const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
+const ACL_PROGRAM = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
+const MAGIC_PROGRAM = new PublicKey("Magic11111111111111111111111111111111111111");
+const TEE_VALIDATOR = new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
+const MAGIC_FEE_VAULT = PublicKey.findProgramAddressSync(
+  [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()],
+  DLP
+)[0];
+const delegationOf = (a: PublicKey) => ({
+  buffer: PublicKey.findProgramAddressSync([Buffer.from("buffer"), a.toBuffer()], PROGRAM_ID)[0],
+  delegationRecord: PublicKey.findProgramAddressSync([Buffer.from("delegation"), a.toBuffer()], DLP)[0],
+  delegationMetadata: PublicKey.findProgramAddressSync([Buffer.from("delegation-metadata"), a.toBuffer()], DLP)[0],
+});
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
 const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
-const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
-/** The cross-margin hub this market settles against (= first market's id). */
-const GROUP_ID = new BN(process.env.ANQA_GROUP ?? process.env.ANQA_DEMO_MARKET ?? 777);
-/** This market's asset slot inside the shared group. */
-const ASSET_INDEX = Number(process.env.ANQA_ASSET_INDEX ?? 0);
+/** The cross-margin hub this keeper runs. Every market in it is driven here. */
+const GROUP_ID = new BN(process.env.ANQA_GROUP ?? 920);
 
 /** Rollup slots are ~7x base slots; crank often or the clock drifts. */
 const CRANK_MS = Number(process.env.ANQA_CRANK_MS ?? 2000);
@@ -97,40 +104,94 @@ async function main() {
   const pBase = mk(conn);
   const pEr = mk(er);
 
-  const pda = (t: string, e: Buffer[] = []) =>
-    PublicKey.findProgramAddressSync([S(t), le8(MARKET_ID), ...e], PROGRAM_ID)[0];
+  const mpda = (t: string, id: BN, e: Buffer[] = []) =>
+    PublicKey.findProgramAddressSync([S(t), le8(id), ...e], PROGRAM_ID)[0];
   const gpda = (t: string, e: Buffer[] = []) =>
     PublicKey.findProgramAddressSync([S(t), le8(GROUP_ID), ...e], PROGRAM_ID)[0];
-  const market = pda("anqa_market");
-  const book = pda("anqa_book");
+
+  // ─────────────────────────── one keeper, N markets ───────────────────────
+  //
+  // Everything that carries risk is **hub-scoped**: one risk engine, one slab
+  // of asset slots, one clock, one portfolio per trader. Only six accounts are
+  // actually per-market. So a process per market was never buying isolation —
+  // it was running the same group-wide work N times over identical data, and
+  // the portfolio scan (a full `getProgramAccounts`) is the most expensive
+  // call the keeper makes. Nine copies of it every 15s is what exhausted the
+  // RPC's connection limit and starved the makers.
+  //
+  // Here the group work runs once and the per-market work loops. Adding a
+  // market costs six PDAs and a few more transactions per tick, not another
+  // process, another RPC connection and another full scan.
   const riskGroup = gpda("anqa_risk");
   const assetSlots = gpda("anqa_assets");
-  const oracleState = pda("anqa_oracle");
-  const internalOracle = pda("anqa_int_oracle");
-  const tape = pda("anqa_tape");
-  const depth = pda("anqa_depth");
-  // The venue keeps its own monotonic clock; see state/venue_clock.rs.
   const venueClock = gpda("anqa_clock");
-  // Isolated margin: portfolios are market-scoped, one per trader per market.
   const portfolioOf = (k: PublicKey) => gpda("anqa_portfolio", [k.toBuffer()]);
 
-  // For feeds without a persistent devnet account (ETH), re-resolve the
-  // freshest transient post periodically; the relay always uses the latest.
-  let feedAcct: PublicKey = BTC_FEED;
-  const FEED_HEX = process.env.ANQA_FEED_HEX ?? "";
-  const refreshFeed = async () => {
-    try {
-      feedAcct = await resolveFeedAccount(conn, FEED_HEX, BTC_FEED.toBase58());
-    } catch {
-      // keep the previous account; the relay will retry
-    }
+  type Mkt = {
+    id: BN;
+    asset: number;
+    market: PublicKey;
+    book: PublicKey;
+    oracleState: PublicKey;
+    internalOracle: PublicKey;
+    tape: PublicKey;
+    depth: PublicKey;
+    feed: PublicKey;
+    /** Per-market requote state; a stalled maker must not back off the others. */
+    requoting: boolean;
+    failures: number;
+    cranks: number;
+    relays: number;
   };
-  if (process.env.ANQA_FEED_ACCT === "auto") {
-    await refreshFeed();
-    setInterval(refreshFeed, 45_000);
-  }
 
-  log("start", `market ${MARKET_ID} · keeper ${keeper.publicKey.toBase58().slice(0, 8)}…`);
+  /** `id:asset:feed` per market, comma separated. Defaults to this hub's nine. */
+  const MARKET_SPEC =
+    process.env.ANQA_MARKETS ??
+    [
+      "0:4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo",
+      "1:7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+      "2:42amVS4KgzR9rA28tkVYqVXjq9Qa8dcZQMbH5EYFX6XC",
+      "3:Ae3LGcV5Wt5Z11xvhxSX1h65uNyjuX4qYFFbgifLx5eX",
+      "4:681QkKLoAQrB5h23Ewq9c8rjM19RBuzqwXZf2RPr9Pyw",
+      "5:7bWHpGtb2j3jqbpA5gFctdmgZELubiZDBxmt1pEzkBHR",
+      "6:HUBqpBf3aGJdVQndFHmMUd1eMcixt7S4swYPCx8A93K1",
+      "7:GgV3a7YeVRga9prjNGEDBG9NwatSaD8rwjZ4GNjPiXTq",
+      "8:A3qp5QG9xGeJR1gexbW9b9eMMsMDLzx3rhud9SnNhwb4",
+    ]
+      .map((s, i) => `${GROUP_ID.addn(i).toString()}:${s}`)
+      .join(",");
+
+  const MK: Mkt[] = MARKET_SPEC.split(",")
+    .filter(Boolean)
+    .map((spec) => {
+      const [idS, assetS, feedS] = spec.split(":");
+      const id = new BN(idS);
+      return {
+        id,
+        asset: Number(assetS),
+        market: mpda("anqa_market", id),
+        book: mpda("anqa_book", id),
+        oracleState: mpda("anqa_oracle", id),
+        internalOracle: mpda("anqa_int_oracle", id),
+        tape: mpda("anqa_tape", id),
+        depth: mpda("anqa_depth", id),
+        feed: new PublicKey(feedS),
+        requoting: false,
+        failures: 0,
+        cranks: 0,
+        relays: 0,
+      };
+    });
+
+  /** Any market will do for instructions that only read hub-scoped state. */
+  const anyMarket = MK[0].market;
+
+  log(
+    "start",
+    `${MK.length} market(s) ${MK[0].id}–${MK[MK.length - 1].id} · keeper ${keeper.publicKey
+      .toBase58()
+      .slice(0, 8)}…`
+  );
   log("start", `crank ${CRANK_MS}ms · settle ${SETTLE_MS}ms · relay ${RELAY_MS}ms`);
 
   let cranks = 0;
@@ -150,68 +211,73 @@ async function main() {
     }
   };
 
+  /** Run `fn` for every market, one at a time — bursts are what get rate-limited. */
+  const forEachMarket = async (tag: string, fn: (m: Mkt) => Promise<void>) => {
+    for (const m of MK) await guard(tag, () => fn(m));
+  };
+
   // relay: inside the rollup, against the clone-readable Pyth feed.
-  let relays = 0;
-  const relay = () =>
-    guard("relay", async () => {
+  const relay = (m: Mkt) =>
+    (async () => {
       await pEr.methods
         .syncInternalOracle()
         .accounts({
           keeper: keeper.publicKey,
-          market,
-          internalOracle,
-          priceUpdate: feedAcct,
+          market: m.market,
+          internalOracle: m.internalOracle,
+          priceUpdate: m.feed,
           systemProgram: SystemProgram.programId,
         })
         .rpc();
-      relays++;
-      if (relays % 10 === 1) log("relay", `oracle refreshed (${relays})`);
-    });
+      m.relays++;
+      if (m.relays % 20 === 1) log("relay", `${m.id} oracle refreshed (${m.relays})`);
+    })();
 
   // crank: inside the rollup, off the relay.
-  const crank = () =>
-    guard("crank", async () => {
+  const crank = (m: Mkt) =>
+    (async () => {
       await pEr.methods
-        .crank(ASSET_INDEX, new BN(0))
+        .crank(m.asset, new BN(0))
         .accounts({
           cranker: keeper.publicKey,
-          market,
+          market: m.market,
           riskGroup,
           assetSlots,
-          oracleState,
-          internalOracle,
+          oracleState: m.oracleState,
+          internalOracle: m.internalOracle,
           venueClock,
         })
         .rpc();
+      m.cranks++;
       cranks++;
-      if (cranks % 30 === 0) {
-        const os1: any = await pEr.account.oracleState.fetch(oracleState);
-        log("crank", `${cranks} ticks · mark $${(Number(os1.lastPrice) / 1e6).toLocaleString()}`);
+      if (m.cranks % 30 === 0) {
+        const os1: any = await pEr.account.oracleState.fetch(m.oracleState);
+        log("crank", `${m.id} ${m.cranks} ticks · mark $${(Number(os1.lastPrice) / 1e6).toLocaleString()}`);
       }
-    });
+    })();
 
   // settle: drain whatever the book matched, oldest first.
-  const settle = () =>
-    guard("settle", async () => {
-      const bk: any = await pEr.account.book.fetch(book);
+  const settle = (m: Mkt) =>
+    (async () => {
+      const bk: any = await pEr.account.book.fetch(m.book);
       let n = Number(bk.pendingCount ?? 0);
       if (n === 0) return;
       for (let i = 0; i < Math.min(n, 4); i++) {
-        const cur: any = await pEr.account.book.fetch(book);
+        const cur: any = await pEr.account.book.fetch(m.book);
         if (Number(cur.pendingCount) === 0) break;
         const head = cur.pending[cur.pendingHead];
         await pEr.methods
           .settleFill()
           .accounts({
             caller: keeper.publicKey,
-            market,
-            book,
+            market: m.market,
+            book: m.book,
             riskGroup,
             assetSlots,
-            oracleState,
+            oracleState: m.oracleState,
             takerPortfolio: portfolioOf(new PublicKey(head.taker)),
             makerPortfolio: portfolioOf(new PublicKey(head.maker)),
-            tape,
+            tape: m.tape,
           })
           // A settle refreshes two accounts through the kernel and its cost
           // scales with how much accrual each must replay — the default 200k
@@ -220,9 +286,9 @@ async function main() {
           .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])
           .rpc();
         prints++;
-        log("settle", `${head.baseLots}@${head.priceInTicks} · ${prints} settled`);
+        log("settle", `${m.id} ${head.baseLots}@${head.priceInTicks} · ${prints} settled`);
       }
-    });
+    })();
 
   // mark-to-market: the kernel only recomputes an account's PnL when the
   // account is refreshed, so a position's unrealised PnL is frozen at its
@@ -290,12 +356,17 @@ async function main() {
     }
     positionHolders = holders;
     groupPortfolios = portfolios;
+    // The owner is the first field after the discriminator. Reading it here
+    // means the mirror pass never has to re-fetch a portfolio it already saw.
+    groupOwners = accounts
+      .filter(({ pubkey }) => portfolios.some((p) => p.equals(pubkey)))
+      .map(({ account }) => new PublicKey(account.data.subarray(8, 40)));
   };
   const markToMarket = async () => {
     for (const pubkey of positionHolders) {
       await pEr.methods
         .refreshPortfolio()
-        .accounts({ market, riskGroup, assetSlots, portfolio: pubkey })
+        .accounts({ market: anyMarket, riskGroup, assetSlots, portfolio: pubkey })
         .rpc()
         .catch(() => {});
     }
@@ -311,7 +382,6 @@ async function main() {
     magicContext: new PublicKey("MagicContext1111111111111111111111111111111"),
   };
   const checkpoint = async () => {
-    if (ASSET_INDEX !== 0) return;
     await pEr.methods
       .commitRiskGroup()
       .accounts({ payer: keeper.publicKey, riskGroup, ...MAGIC })
@@ -336,13 +406,150 @@ async function main() {
   // only something inside the rollup that is allowed to read it can publish
   // the aggregate — and a taker who cannot size a trade goes elsewhere, so
   // this runs on the same tick as settlement.
-  const publishDepth = () =>
-    guard("depth", async () => {
-      await pEr.methods
-        .publishDepth()
-        .accounts({ caller: keeper.publicKey, market, book, depth })
+  const publishDepth = (m: Mkt) =>
+    pEr.methods
+      .publishDepth()
+      .accounts({ caller: keeper.publicKey, market: m.market, book: m.book, depth: m.depth })
+      .rpc();
+
+  // The same idea as depth, aimed the other way: depth publishes everyone's
+  // size without the owners, this publishes one owner's rows without anyone
+  // else's. A trader cannot read the book — membership would show them the
+  // whole thing — so the engine projects their own orders into an account
+  // only they can read.
+  //
+  // Driven for every portfolio the group knows about. A trader with nothing
+  // resting gets an empty mirror, which is the correct answer and also proves
+  // to the terminal that the mirror is live rather than stale.
+  const ORDERS_SEED = Buffer.from("anqa_myorders");
+  const mirrorOf = (m: Mkt, owner: PublicKey) =>
+    PublicKey.findProgramAddressSync(
+      [ORDERS_SEED, m.id.toArrayLike(Buffer, "le", 8), owner.toBuffer()],
+      PROGRAM_ID
+    )[0];
+
+  // Owners known to have a mirror, and when the set was last rebuilt. Without
+  // this the publisher costs one rollup read per portfolio per tick on every
+  // keeper — nine markets multiplying the same question — and this venue has
+  // already learned once what happens when its own processes become the load.
+  // Mirrors are created by hand, rarely, so a stale answer costs at most one
+  // discovery interval before a new trader's rows appear.
+  const mirrorOwners = new Map<string, PublicKey[]>();
+  const mirrorsScannedAt = new Map<string, number>();
+  const MIRROR_RESCAN_MS = 30_000;
+
+  /// Stand a mirror up for a trader who has none.
+  ///
+  /// Three steps on two layers: create and delegate on base, hide inside the
+  /// rollup. The engine does all of it because none of it needs the trader —
+  /// the permission's member list is fixed by the program to the owner and
+  /// this engine, so provisioning grants the provisioner nothing. That is the
+  /// whole point: a trader should never sign, or deposit, for the privilege of
+  /// seeing their own orders.
+  const provisionMirror = async (m: Mkt, owner: PublicKey) => {
+    const orders = mirrorOf(m, owner);
+    if (!(await conn.getAccountInfo(orders).catch(() => null))) {
+      await pBase.methods
+        .initializeTraderOrders(m.id)
+        .accounts({ payer: keeper.publicKey, owner, market: m.market, orders })
         .rpc();
-    });
+    }
+    // Base-layer permission record, before delegation. The rollup-side hide
+    // extends this rather than creating it, and skipping it fails at
+    // transaction verification with no program log to explain why.
+    const permission = PublicKey.findProgramAddressSync(
+      [Buffer.from("permission:"), orders.toBuffer()],
+      ACL_PROGRAM
+    )[0];
+    if (!(await conn.getAccountInfo(permission).catch(() => null))) {
+      await pBase.methods
+        .createTraderOrdersPermission(m.id)
+        .accounts({
+          payer: keeper.publicKey,
+          owner,
+          market: m.market,
+          orders,
+          permission,
+          permissionProgram: ACL_PROGRAM,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+    const onBase = await conn.getAccountInfo(orders).catch(() => null);
+    if (onBase && !onBase.owner.equals(DLP)) {
+      const d = delegationOf(orders);
+      await pBase.methods
+        .delegateTraderOrders(m.id)
+        .accounts({
+          payer: keeper.publicKey,
+          owner,
+          orders,
+          bufferOrders: d.buffer,
+          delegationRecordOrders: d.delegationRecord,
+          delegationMetadataOrders: d.delegationMetadata,
+          ownerProgram: PROGRAM_ID,
+          delegationProgram: DLP,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+    }
+    if (!(await er.getAccountInfo(permission).catch(() => null))) {
+      await pEr.methods
+        .setTraderOrdersPrivate()
+        .accounts({
+          payer: keeper.publicKey,
+          owner,
+          orders,
+          market: m.market,
+          permission,
+          vault: MAGIC_FEE_VAULT,
+          magicProgram: MAGIC_PROGRAM,
+          permissionProgram: ACL_PROGRAM,
+        })
+        .rpc();
+    }
+  };
+
+  // Owners are hub-wide, so resolve them once per scan rather than re-reading
+  // every portfolio for every market.
+  let groupOwners: PublicKey[] = [];
+
+  const discoverMirrors = async (m: Mkt) => {
+    const key = m.id.toString();
+    const owners: PublicKey[] = [];
+    for (const owner of groupOwners) {
+      if (!(await er.getAccountInfo(mirrorOf(m, owner)).catch(() => null))) {
+        // One trader's provisioning failure is that trader's stale view, not
+        // the venue's problem — log it and carry on to the next.
+        await provisionMirror(m, owner).catch((e: any) =>
+          log("mirrors", `${m.id} provision ${owner.toBase58().slice(0, 8)}: ${String(e?.message ?? e).slice(0, 60)}`)
+        );
+        if (!(await er.getAccountInfo(mirrorOf(m, owner)).catch(() => null))) continue;
+      }
+      owners.push(owner);
+    }
+    if (owners.length !== (mirrorOwners.get(key)?.length ?? -1)) {
+      log("mirrors", `${m.id}: ${owners.length} trader view(s) live`);
+    }
+    mirrorOwners.set(key, owners);
+    mirrorsScannedAt.set(key, Date.now());
+  };
+
+  const publishOrderMirrors = async (m: Mkt) => {
+    if (groupOwners.length === 0) return;
+    const key = m.id.toString();
+    if (Date.now() - (mirrorsScannedAt.get(key) ?? 0) > MIRROR_RESCAN_MS) await discoverMirrors(m);
+    for (const owner of mirrorOwners.get(key) ?? []) {
+      // One trader's failure must never stop the rest: a mirror that has been
+      // undelegated, or a transient rollup error, is that trader's stale view
+      // and nobody else's problem.
+      await pEr.methods
+        .publishTraderOrders()
+        .accounts({ caller: keeper.publicKey, market: m.market, book: m.book, owner, orders: mirrorOf(m, owner) })
+        .rpc()
+        .catch(() => {});
+    }
+  };
 
   // isolated liquidation: enforce that a position can only lose the collateral
   // put behind it. The kernel liquidates per ACCOUNT, so without this a bad
@@ -350,17 +557,17 @@ async function main() {
   // collateral and blended entry per asset in the portfolio; the check here
   // mirrors `isolated_underwater` on-chain exactly, and the instruction refuses
   // if we are early — so calling it optimistically is safe.
-  const isolatedSweep = async () => {
-    const os1: any = await pEr.account.oracleState.fetch(oracleState).catch(() => null);
+  const isolatedSweep = async (m: Mkt) => {
+    const os1: any = await pEr.account.oracleState.fetch(m.oracleState).catch(() => null);
     if (!os1) return;
     const mark = Number(os1.lastPrice);
     for (const pubkey of positionHolders) {
       const info = await er.getAccountInfo(pubkey).catch(() => null);
       if (!info) continue;
-      const collateral = Number(info.data.readBigUInt64LE(COLLATERAL + ASSET_INDEX * 16));
-      const entry = Number(info.data.readBigUInt64LE(ENTRY + ASSET_INDEX * 16));
+      const collateral = Number(info.data.readBigUInt64LE(COLLATERAL + m.asset * 16));
+      const entry = Number(info.data.readBigUInt64LE(ENTRY + m.asset * 16));
       if (collateral === 0 || entry === 0) continue;
-      const leg = readPosition(info.data, ASSET_INDEX);
+      const leg = readPosition(info.data, m.asset);
       if (!leg || leg.lots === 0) continue;
 
       // Mirrors `isolated_underwater` on-chain; the instruction refuses if we
@@ -375,11 +582,11 @@ async function main() {
         .accounts({
           trader: keeper.publicKey,
           session: null,
-          market,
-          book,
+          market: m.market,
+          book: m.book,
           riskGroup,
           assetSlots,
-          oracleState,
+          oracleState: m.oracleState,
           portfolio: pubkey,
         })
         .rpc()
@@ -395,11 +602,10 @@ async function main() {
   // it runs blind over every group portfolio — but from the group-lead
   // keeper only, or nine keepers would send nine copies.
   const realize = async () => {
-    if (ASSET_INDEX !== 0) return;
     for (const pubkey of groupPortfolios) {
       await pEr.methods
         .realizePnl()
-        .accounts({ caller: keeper.publicKey, market, riskGroup, assetSlots, portfolio: pubkey })
+        .accounts({ caller: keeper.publicKey, market: anyMarket, riskGroup, assetSlots, portfolio: pubkey })
         .rpc()
         .catch(() => {}); // nothing to promote, or the domain is mid-refresh
     }
@@ -410,11 +616,11 @@ async function main() {
   // — one winner's expired winnings can wedge the asset. The kernel refuses
   // the sweep unless the bucket has actually lapsed, so calling it blind on
   // both domains is safe and cheap.
-  const sweep = async () => {
-    for (const domain of [ASSET_INDEX * 2, ASSET_INDEX * 2 + 1]) {
+  const sweep = async (m: Mkt) => {
+    for (const domain of [m.asset * 2, m.asset * 2 + 1]) {
       await pEr.methods
         .sweepBacking(domain)
-        .accounts({ caller: keeper.publicKey, market, riskGroup, assetSlots })
+        .accounts({ caller: keeper.publicKey, market: m.market, riskGroup, assetSlots })
         .rpc()
         .then(() => log("sweep", `lapsed backing bucket expired — domain ${domain}`))
         .catch(() => {}); // not lapsed — the normal case
@@ -441,7 +647,6 @@ async function main() {
   const LEDGER_BYTES = 73;
   const claimDeposits = () =>
     guard("deposit", async () => {
-      if (!MARKET_ID.eq(GROUP_ID)) return; // lead keeper only
       const ledgers = await conn.getProgramAccounts(PROGRAM_ID, {
         filters: [
           { dataSize: LEDGER_BYTES },
@@ -467,7 +672,7 @@ async function main() {
             .claimDeposit()
             .accounts({
               caller: keeper.publicKey,
-              market,
+              market: anyMarket,
               riskGroup,
               assetSlots,
               portfolio: portfolioOf(owner),
@@ -491,8 +696,8 @@ async function main() {
       }
     });
 
-  await relay();
-  await sweep();
+  await forEachMarket("relay", relay);
+  await forEachMarket("sweep", sweep);
   await claimDeposits();
 
   // A keeper outage leaves the kernel with an accrual-slot debt: each crank
@@ -519,8 +724,16 @@ async function main() {
       if (i >= 5000) return log("catchup", "gave up after 5000 cranks — still behind");
       try {
         await pEr.methods
-          .crank(ASSET_INDEX, new BN(0))
-          .accounts({ cranker: keeper.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle, venueClock })
+          .crank(MK[0].asset, new BN(0))
+          .accounts({
+            cranker: keeper.publicKey,
+            market: MK[0].market,
+            riskGroup,
+            assetSlots,
+            oracleState: MK[0].oracleState,
+            internalOracle: MK[0].internalOracle,
+            venueClock,
+          })
           .rpc();
       } catch (e: any) {
         log("catchup", `· ${String(e?.message ?? e).slice(0, 90)}`);
@@ -533,7 +746,7 @@ async function main() {
   };
   await catchUp();
 
-  await crank();
+  await forEachMarket("crank", crank);
 
   // requote watchdog: a taker big enough to eat a whole side leaves the next
   // trader — often the same one, trying to close — with nothing to cross,
@@ -545,63 +758,95 @@ async function main() {
   // respawned four times a minute per market forever, and nine markets doing
   // that is enough load to *cause* the failure it is reacting to. Growing the
   // delay after each failure lets the endpoint recover; one success resets it.
-  let requoting = false;
-  let failures = 0;
   const REQUOTE_MS = 15_000;
   const REQUOTE_MAX_MS = 5 * 60_000;
-  const requoteDelay = () =>
-    Math.min(REQUOTE_MS * 2 ** failures, REQUOTE_MAX_MS) * (1 + Math.random() * 0.3);
+  const requoteDelay = (m: Mkt) =>
+    Math.min(REQUOTE_MS * 2 ** m.failures, REQUOTE_MAX_MS) * (1 + Math.random() * 0.3);
 
-  const requote = () =>
+  // Only one maker at a time across the whole venue. Nine concurrent spawns is
+  // nine node processes each opening its own RPC connection — the exact burst
+  // that starves them all and leaves every book empty.
+  let makerBusy = false;
+
+  const requote = (m: Mkt) =>
     guard("requote", async () => {
-      if (requoting) return;
-      const bk: any = await pEr.account.book.fetch(book);
+      if (makerBusy || m.requoting) return;
+      const bk: any = await pEr.account.book.fetch(m.book);
       const active = (s: any) => s.orders.filter((o: any) => o.active === 1).length;
       if (active(bk.bids) > 0 && active(bk.asks) > 0) {
-        failures = 0;
+        m.failures = 0;
         return;
       }
-      requoting = true;
-      log("requote", "a side of the book is empty — re-running the maker");
+      makerBusy = true;
+      m.requoting = true;
+      log("requote", `${m.id} a side of the book is empty — re-running the maker`);
       const child = spawn(
         "npx",
         ["ts-node", "--transpile-only", "app/demo-maker.ts"],
-        { env: { ...process.env, ANQA_DEMO_MARKET: MARKET_ID.toString() }, stdio: "ignore" }
+        {
+          env: {
+            ...process.env,
+            ANQA_DEMO_MARKET: m.id.toString(),
+            ANQA_GROUP: GROUP_ID.toString(),
+            ANQA_ASSET_INDEX: String(m.asset),
+            ANQA_FEED_ACCT: m.feed.toBase58(),
+          },
+          stdio: "ignore",
+        }
       );
       child.on("exit", (code) => {
-        requoting = false;
+        makerBusy = false;
+        m.requoting = false;
         if (code === 0) {
-          failures = 0;
-          log("requote", "ladder restored");
+          m.failures = 0;
+          log("requote", `${m.id} ladder restored`);
         } else {
-          failures++;
-          log(
-            "requote",
-            `maker exited ${code} — next attempt in ${Math.round(requoteDelay() / 1000)}s`
-          );
+          m.failures++;
+          log("requote", `${m.id} maker exited ${code} — retry in ${Math.round(requoteDelay(m) / 1000)}s`);
         }
       });
     });
 
   /** Self-scheduling so the delay can grow; `setInterval` cannot back off. */
-  const scheduleRequote = () =>
+  const scheduleRequote = (m: Mkt) =>
     setTimeout(async () => {
-      await requote();
-      scheduleRequote();
-    }, requoteDelay());
+      await requote(m);
+      scheduleRequote(m);
+    }, requoteDelay(m));
 
-  setInterval(relay, RELAY_MS);
-  setInterval(crank, CRANK_MS);
-  setInterval(settle, SETTLE_MS);
-  setInterval(publishDepth, 1_500);
-  setInterval(sweep, 30_000);
+  // Per-market work: one pass over every market per tick, sequential inside
+  // the pass. Cadences are per *pass*, not per market, so adding markets
+  // lengthens a pass rather than multiplying concurrent requests.
+  const every = (ms: number, tag: string, fn: (m: Mkt) => Promise<void>) => {
+    let running = false;
+    setInterval(async () => {
+      if (running) return; // a slow pass must not stack on itself
+      running = true;
+      try {
+        await forEachMarket(tag, fn);
+      } finally {
+        running = false;
+      }
+    }, ms);
+  };
+
+  every(RELAY_MS, "relay", relay);
+  every(CRANK_MS, "crank", crank);
+  every(SETTLE_MS, "settle", settle);
+  every(1_500, "depth", publishDepth);
+  every(2_000, "mirrors", publishOrderMirrors);
+  every(4_000, "isolated", isolatedSweep);
+  every(30_000, "sweep", sweep);
+
+  // Hub-wide work: once, not once per market. This is the half that made a
+  // process-per-market design cost N times more than it had any reason to.
   setInterval(() => guard("mtm-scan", scanHolders), 15_000);
   setInterval(() => guard("mtm", markToMarket), 1_500);
   setInterval(() => guard("realize", realize), 20_000);
-  setInterval(() => guard("isolated", isolatedSweep), 4_000);
   setInterval(claimDeposits, 6_000);
   setInterval(() => guard("commit", checkpoint), 300_000);
-  scheduleRequote();
+
+  for (const m of MK) scheduleRequote(m);
   void guard("mtm-scan", scanHolders);
 
   process.on("SIGINT", () => {

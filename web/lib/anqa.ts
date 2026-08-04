@@ -12,7 +12,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import idl from "./anqa_core.json";
 
 export const PROGRAM_ID = new PublicKey(
-  process.env.NEXT_PUBLIC_ANQA_PROGRAM ?? "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+  process.env.NEXT_PUBLIC_ANQA_PROGRAM ?? "4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW"
 );
 export const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 export const ACL = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
@@ -63,6 +63,9 @@ export function anqaAccounts(marketId: BN = MARKET_ID, groupId: BN = marketId) {
     // market trades from it; isolation lives in the per-position collateral
     // recorded inside it, not in separate accounts.
     portfolioOf: (owner: PublicKey) => pda("anqa_portfolio", [owner.toBuffer()], groupId),
+    // A trader's own resting orders, projected out of a book they are not
+    // allowed to read. Per market, because the book is.
+    ordersOf: (owner: PublicKey) => pda("anqa_myorders", [owner.toBuffer()], marketId),
     // Platform-wide: one session grant per owner, every market honours it.
     sessionOf: (owner: PublicKey) =>
       PublicKey.findProgramAddressSync([seed("anqa_session"), owner.toBuffer()], PROGRAM_ID)[0],

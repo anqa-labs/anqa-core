@@ -33,7 +33,7 @@ import os from "os";
 import path from "path";
 import { resolveFeedAccount } from "./feed";
 
-const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
+const PROGRAM_ID = new PublicKey("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
 const BTC_FEED = new PublicKey(
   process.env.ANQA_FEED_ACCT && process.env.ANQA_FEED_ACCT !== "auto"
     ? process.env.ANQA_FEED_ACCT
@@ -301,7 +301,10 @@ async function main() {
     ] as const) {
       try {
         await pEr.methods
-          .placeOrder(side, { postOnly: {} }, new BN(px), new BN(LOTS), new BN(Date.now() % 1e9 + rested), new BN(0))
+          // Shown, not hidden: this maker exists to give the ladder something
+          // to display. Set HIDE_RUNGS=1 to quote the same ladder invisibly and
+          // watch depth stay empty while fills still print to the tape.
+          .placeOrder(side, { postOnly: {} }, new BN(px), new BN(LOTS), new BN(Date.now() % 1e9 + rested), new BN(0), process.env.HIDE_RUNGS === "1")
           .accounts({
             trader: maker.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio,
           })

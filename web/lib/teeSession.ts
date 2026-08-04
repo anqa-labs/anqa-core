@@ -84,6 +84,19 @@ export async function teeToken(
   return token;
 }
 
+/**
+ * The token already minted for `owner`, or null.
+ *
+ * For readers that need sight of private accounts but must never provoke a
+ * signature prompt of their own — background polls for positions and resting
+ * orders. `useAnqa` mints; these reuse. Read per poll rather than once at
+ * mount, because a hook can start before the wallet has signed and must pick
+ * the token up when it lands.
+ */
+export function cachedToken(owner: PublicKey | string): string | null {
+  return cached(typeof owner === "string" ? owner : owner.toBase58());
+}
+
 /** The rollup URL to actually connect to, token attached when we have one. */
 export function rpcWithToken(rpc: string, token: string | null): string {
   const base = rpc.split("?")[0];
