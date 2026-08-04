@@ -131,10 +131,22 @@ export async function fundMarket(
     need: { open: boolean; delegate: boolean; grant: boolean };
     /** Base-layer connection — required to give collateral back. */
     conn?: Connection;
+    /** Set by the deposit flow, where a wallet prompt is already expected. */
+    hideAccount?: boolean;
     onStep?: (s: string) => void;
   }
 ): Promise<number> {
   const { usd, mint, sessionKey, sessionPda, need, onStep } = args;
+
+  // One extra signature, folded into the deposit the trader is already
+  // approving — never into a trade.
+  if (args.hideAccount && er && !hiddenThisSession.has(c.owner.toBase58())) {
+    hiddenThisSession.add(c.owner.toBase58());
+    if (!(await portfolioIsPrivate(er, c).catch(() => true))) {
+      onStep?.("Making your account private");
+      await Promise.race([setPortfolioPrivate(er, c).catch(() => {}), sleep(8000)]);
+    }
+  }
   // Nudge the credit along, but never wait on it.
   //
   // Anchor's `.rpc()` waits for a websocket confirmation the rollup does not
@@ -155,23 +167,11 @@ export async function fundMarket(
     }
   };
 
-  // Hide the account before anything else can return early.
-  //
-  // This sat after the setup step, which a funded account never reaches — so
-  // every existing account stayed readable no matter how much it traded. It
-  // belongs ahead of the fast path, not behind it.
-  //
-  // Cached per owner for the session: the permission record is created once,
-  // so this costs one rollup read on the first order and nothing after.
-  if (er && !hiddenThisSession.has(c.owner.toBase58())) {
-    if (await portfolioIsPrivate(er, c).catch(() => true)) {
-      hiddenThisSession.add(c.owner.toBase58());
-    } else {
-      await Promise.race([setPortfolioPrivate(er, c).catch(() => {}), sleep(6000)]);
-      hiddenThisSession.add(c.owner.toBase58());
-    }
-  }
-
+  // Making the account private needs the *owner's* signature, so it can only
+  // happen where a wallet prompt is already expected — a deposit. Never here:
+  // opening a position is session-signed and must stay instant. Putting it in
+  // this path made every first trade ask for the wallet, which is the one
+  // thing a session key exists to prevent.
   // The common case, and the one that has to be fast: an account that is
   // already open, delegated, session-granted and plainly funded needs nothing
   // here. Checking that costs one rollup read; everything below it costs

@@ -108,6 +108,7 @@ export function DepositModal({
       await fundMarket(base, er, ctx(), {
         usd: account + n,
         mint: MINT,
+        hideAccount: true,
         sessionKey: anqa.sessionKp.publicKey,
         sessionPda: anqa.acc.sessionOf(owner),
         need: {
