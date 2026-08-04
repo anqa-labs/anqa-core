@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Badge } from "./ui";
 import { lotFraction, ticksToUsd } from "@/lib/anqa";
+import { useDepth, type Level } from "@/lib/useDepth";
 import { useTickFlash, useTweened } from "@/lib/useLive";
 import type { Anqa } from "@/lib/useAnqa";
 
@@ -41,7 +42,7 @@ export function OrderBook({ anqa }: { anqa: Anqa }) {
         ))}
         <div className="ml-auto pr-2">
           <Badge tone={tab === "book" && anqa.market?.dark ? "dark" : "neutral"}>
-            {tab === "book" ? (anqa.market?.dark ? "hidden" : "lit") : "public"}
+            {tab === "book" ? (anqa.market?.dark ? "aggregate" : "lit") : "public"}
           </Badge>
         </div>
       </header>
@@ -57,16 +58,17 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
   const px = (t: any) => ticksToUsd(Number(t.toString()), tick) / frac;
   const mark = anqa.markPrice === null ? null : anqa.markPrice / 1e6 / frac;
 
-  const asks = [...anqa.myAsks].sort(
-    (a, b) => Number(a.priceInTicks.toString()) - Number(b.priceInTicks.toString())
+  // Aggregate depth: totals per price, published by the program from inside
+  // the rollup. It says how much is resting and never whose it is — the one
+  // piece of opacity that would cost the taker rather than protect the maker.
+  const depth = useDepth(anqa.marketInfo.id);
+  const asks = depth?.asks ?? [];
+  const bids = depth?.bids ?? [];
+  // Which levels the trader has size in — theirs to know, nobody else's.
+  const mine = new Set(
+    [...anqa.myBids, ...anqa.myAsks].map((o) => Number(o.priceInTicks.toString()))
   );
-  const bids = [...anqa.myBids].sort(
-    (a, b) => Number(b.priceInTicks.toString()) - Number(a.priceInTicks.toString())
-  );
-  const maxLots = Math.max(
-    1,
-    ...[...asks, ...bids].map((o) => Number(o.baseLots.toString()))
-  );
+  const maxLots = Math.max(1, ...[...asks, ...bids].map((l) => l.baseLots));
 
   return (
     <>
@@ -79,20 +81,20 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* asks, worst at top so the spread sits in the middle */}
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col-reverse">
-          <Rows rows={asks} hidden={anqa.hiddenAsks} side="ask" px={px} maxLots={maxLots} frac={frac} />
+          <Rows rows={asks} mine={mine} side="ask" px={px} maxLots={maxLots} frac={frac} />
         </div>
 
         <MidMark mark={mark} />
 
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <Rows rows={bids} hidden={anqa.hiddenBids} side="bid" px={px} maxLots={maxLots} frac={frac} />
+          <Rows rows={bids} mine={mine} side="bid" px={px} maxLots={maxLots} frac={frac} />
         </div>
       </div>
 
       <footer className="shrink-0 px-3 py-1.5 border-t border-line-soft text-[10px] text-dim">
-        {anqa.hiddenBids + anqa.hiddenAsks === 0 && asks.length + bids.length === 0
+        {asks.length + bids.length === 0
           ? "Nothing resting yet."
-          : `${anqa.hiddenBids + anqa.hiddenAsks} orders you may not read. Nobody reads yours.`}
+          : `${((depth!.totalBidLots + depth!.totalAskLots) * frac).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${anqa.marketInfo.base} resting · sizes are totals, never whose.`}
       </footer>
     </>
   );
@@ -119,14 +121,14 @@ function MidMark({ mark }: { mark: number | null }) {
 
 function Rows({
   rows,
-  hidden,
+  mine,
   side,
   px,
   maxLots,
   frac,
 }: {
-  rows: any[];
-  hidden: number;
+  rows: Level[];
+  mine: Set<number>;
   side: "bid" | "ask";
   px: (t: any) => number;
   maxLots: number;
@@ -134,48 +136,37 @@ function Rows({
 }) {
   const tone = side === "bid" ? "text-bid" : "text-ask";
   const bar = side === "bid" ? "bg-bid/12" : "bg-ask/12";
-  const veils = Math.min(hidden, 7);
   let running = 0;
 
   return (
     <>
-      {rows.map((o, i) => {
-        const lots = Number(o.baseLots.toString());
-        running += lots;
+      {rows.map((l) => {
+        running += l.baseLots;
         return (
           <div
-            key={o.seq?.toString() ?? i}
+            key={l.priceInTicks}
             className="relative grid grid-cols-3 px-3 py-[3px] text-[11px] row-hover row-in"
           >
             <div
               className={`absolute inset-y-0 right-0 depth-bar ${bar}`}
-              style={{ width: `${Math.min(100, (lots / maxLots) * 100)}%` }}
+              style={{ width: `${Math.min(100, (l.baseLots / maxLots) * 100)}%` }}
             />
             <span className={`relative tnum font-medium ${tone}`}>
-              {px(o.priceInTicks).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {px(l.priceInTicks).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
             <span className="relative tnum text-right text-text">
-              {(lots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              {(l.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })}
             </span>
             <span className="relative tnum text-right text-muted">
               {(running * frac).toLocaleString(undefined, { maximumFractionDigits: 3 })}
-              <span className="text-phoenix/80 ml-1 text-[9px]">yours</span>
+              {/* Only the trader can tell which levels carry their own size. */}
+              {mine.has(l.priceInTicks) && (
+                <span className="text-phoenix/80 ml-1 text-[9px]">yours</span>
+              )}
             </span>
           </div>
         );
       })}
-
-      {Array.from({ length: veils }).map((_, i) => (
-        <div
-          key={`veil-${i}`}
-          className="grid grid-cols-3 items-center px-3 py-[3px]"
-          title="Resting depth you are not permitted to read"
-        >
-          <span className="veil h-2.5 rounded-sm mr-4 opacity-35" />
-          <span className="veil h-2.5 rounded-sm ml-6 opacity-35" />
-          <span className="text-right text-[9px] text-dim">hidden</span>
-        </div>
-      ))}
     </>
   );
 }

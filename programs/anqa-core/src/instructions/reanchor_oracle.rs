@@ -26,13 +26,13 @@
 use anchor_lang::prelude::*;
 use percolator::MarketGroupV16ViewMut;
 
-use crate::constants::{
+use crate::instructions::initialize_risk::MAX_ACCRUAL_DT_SLOTS;
+use crate::constants::{CLOCK_SEED, 
     ASSET_SLOTS_SEED, INTERNAL_ORACLE_SEED, MARKET_SEED, ORACLE_STATE_SEED, RISK_GROUP_SEED,
 };
 use crate::errors::{map_risk, AnqaError};
 use crate::state::{
-    accept_mark, read_internal, AssetSlots, InternalOracle, Market, OracleState, RiskGroup,
-};
+    accept_mark, read_internal, AssetSlots, InternalOracle, Market, OracleState, RiskGroup, VenueClock};
 
 #[derive(Accounts)]
 pub struct ReanchorOracle<'info> {
@@ -57,6 +57,16 @@ pub struct ReanchorOracle<'info> {
     /// The relayed price — same trust path as the crank.
     #[account(seeds = [INTERNAL_ORACLE_SEED, &market.market_id.to_le_bytes()], bump)]
     pub internal_oracle: Account<'info, InternalOracle>,
+
+    /// The venue's own clock. Bound to this group by seeds: the kernel trusts
+    /// whatever slot it is handed, so a caller-supplied account here would be
+    /// a way to stall or force accrual. See `state/venue_clock.rs`.
+    #[account(
+        mut,
+        seeds = [CLOCK_SEED, &market.group_id.to_le_bytes()],
+        bump = venue_clock.bump
+    )]
+    pub venue_clock: Account<'info, VenueClock>,
 }
 
 pub fn handler(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
@@ -80,7 +90,10 @@ pub fn handler(ctx: Context<ReanchorOracle>, asset_index: u32) -> Result<()> {
         market,
     )?;
 
-    let slot = Clock::get()?.slot;
+    let slot = ctx
+        .accounts
+        .venue_clock
+        .tick(Clock::get()?.slot, MAX_ACCRUAL_DT_SLOTS);
     let mut group = ctx.accounts.risk_group.load_mut()?;
     let n_assets = group.asset_count();
     let mut slots = ctx.accounts.asset_slots.load_mut()?;

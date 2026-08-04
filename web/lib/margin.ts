@@ -130,10 +130,21 @@ export async function fundMarket(
   }
 ): Promise<number> {
   const { usd, mint, sessionKey, sessionPda, need, onStep } = args;
+  // Nudge the credit along, but never wait on it.
+  //
+  // Anchor's `.rpc()` waits for a websocket confirmation the rollup does not
+  // reliably deliver, and a hang is not something `catch` can save you from —
+  // it left this modal spinning forever with the trader's money already
+  // deposited. The keeper's deposit rail credits ledger-derived deposits
+  // within seconds regardless (see keeper.ts), so this send is an optimisation
+  // and the timeout is what makes it safe to attempt at all.
   const claim = async () => {
     if (!er) return;
     try {
-      await claimDeposit(er, { ...c, trader: sessionKey, session: sessionPda });
+      await Promise.race([
+        claimDeposit(er, { ...c, trader: sessionKey, session: sessionPda }),
+        sleep(4000),
+      ]);
     } catch {
       // nothing to claim, or the grant is not visible in the rollup yet
     }
@@ -144,8 +155,10 @@ export async function fundMarket(
   // would take a second bite out of their wallet for the same collateral.
   if (!need.open && (await uncredited(base, er, c)) > 1) {
     onStep?.("Crediting deposit");
-    for (let i = 0; i < 5; i++) {
-      await claim();
+    // Bounded: the rail credits within ~6s, so give it a little longer than
+    // that and then move on rather than trapping the trader in a spinner.
+    await claim();
+    for (let i = 0; i < 8; i++) {
       if ((await collateralOf(er ?? base, c)) >= usd - 1) break;
       await sleep(1500);
     }
@@ -206,7 +219,12 @@ export async function defundMarket(
 
   onStep?.("Returning collateral");
   await requestWithdraw(base, c, mint, new BN(Math.round(usd * 1e6)));
-  await authorizeWithdraw(er, c);
+  // Same hazard as the deposit claim: this is a rollup send, and Anchor waits
+  // on a websocket confirmation the rollup does not reliably deliver, which
+  // hangs the caller rather than failing it. The authorisation is
+  // permissionless, so what matters is that it was sent — the poll below is
+  // what establishes whether the verdict actually landed.
+  await Promise.race([authorizeWithdraw(er, c), sleep(5000)]);
 
   // The receipt is delegated while the verdict is pending; once it is back
   // under the program on base, the signerless settle can pay out.

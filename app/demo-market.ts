@@ -14,6 +14,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { createMint, mintTo, getOrCreateAssociatedTokenAccount, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -42,7 +43,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const PACE = Number(process.env.ANQA_PACE ?? 800);
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const er = new Connection(ER_RPC, "confirmed");
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8")))

@@ -118,6 +118,27 @@ pub struct BookSide {
 }
 
 impl BookSide {
+    /// Walk live orders best-first, yielding `(price_in_ticks, base_lots)`.
+    ///
+    /// Deliberately drops the owner and the order id: this is what feeds the
+    /// public depth mirror, and the whole point is that nothing identifying
+    /// leaves the book.
+    pub fn walk_prices(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        let mut cursor = self.head;
+        let mut guard = 0usize;
+        core::iter::from_fn(move || {
+            while cursor != NIL && guard < ORDERS_PER_SIDE {
+                guard += 1;
+                let o = &self.orders[cursor as usize];
+                cursor = o.next;
+                if o.active == 1 {
+                    return Some((o.price_in_ticks, o.base_lots));
+                }
+            }
+            None
+        })
+    }
+
     /// Thread every slot onto the free list.
     pub fn init(&mut self) {
         self.head = NIL;

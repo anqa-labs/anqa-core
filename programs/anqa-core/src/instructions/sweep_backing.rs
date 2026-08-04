@@ -14,9 +14,10 @@
 use anchor_lang::prelude::*;
 use percolator::MarketGroupV16ViewMut;
 
-use crate::constants::{ASSET_SLOTS_SEED, MARKET_SEED, RISK_GROUP_SEED};
+use crate::instructions::initialize_risk::MAX_ACCRUAL_DT_SLOTS;
+use crate::constants::{CLOCK_SEED, ASSET_SLOTS_SEED, MARKET_SEED, RISK_GROUP_SEED};
 use crate::errors::{map_risk, AnqaError};
-use crate::state::{AssetSlots, Market, RiskGroup};
+use crate::state::{AssetSlots, Market, RiskGroup, VenueClock};
 
 #[derive(Accounts)]
 pub struct SweepBacking<'info> {
@@ -34,6 +35,16 @@ pub struct SweepBacking<'info> {
 
     #[account(mut, seeds = [ASSET_SLOTS_SEED, &market.group_id.to_le_bytes()], bump)]
     pub asset_slots: AccountLoader<'info, AssetSlots>,
+
+    /// The venue's own clock. Bound to this group by seeds: the kernel trusts
+    /// whatever slot it is handed, so a caller-supplied account here would be
+    /// a way to stall or force accrual. See `state/venue_clock.rs`.
+    #[account(
+        mut,
+        seeds = [CLOCK_SEED, &market.group_id.to_le_bytes()],
+        bump = venue_clock.bump
+    )]
+    pub venue_clock: Account<'info, VenueClock>,
 }
 
 pub fn handler(ctx: Context<SweepBacking>, domain: u32) -> Result<()> {
@@ -42,7 +53,10 @@ pub fn handler(ctx: Context<SweepBacking>, domain: u32) -> Result<()> {
         AnqaError::BadAssetIndex
     );
 
-    let slot = Clock::get()?.slot;
+    let slot = ctx
+        .accounts
+        .venue_clock
+        .tick(Clock::get()?.slot, MAX_ACCRUAL_DT_SLOTS);
     let mut group = ctx.accounts.risk_group.load_mut()?;
     let n_assets = group.asset_count();
     let mut slots = ctx.accounts.asset_slots.load_mut()?;

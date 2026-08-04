@@ -15,6 +15,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -36,7 +37,7 @@ const S = (x: string) => Buffer.from(x);
 const le8 = (n: BN) => n.toArrayLike(Buffer, "le", 8);
 
 async function main() {
-  const connection = new Connection(RPC, "confirmed");
+  const connection = baseConnection(RPC);
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8"))

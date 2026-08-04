@@ -117,6 +117,39 @@
         },
         {
           "name": "price_update"
+        },
+        {
+          "name": "venue_clock",
+          "docs": [
+            "The venue's own clock. Bound to this group by seeds: the kernel trusts",
+            "whatever slot it is handed, so a caller-supplied account here would be",
+            "a way to stall or force accrual. See `state/venue_clock.rs`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -1787,6 +1820,39 @@
               }
             ]
           }
+        },
+        {
+          "name": "venue_clock",
+          "docs": [
+            "The venue's own clock. Bound to this group by seeds: the kernel trusts",
+            "whatever slot it is handed, so a caller-supplied account here would be",
+            "a way to stall or force accrual. See `state/venue_clock.rs`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -2294,6 +2360,202 @@
                   111,
                   111,
                   107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "delegate_depth",
+      "discriminator": [
+        8,
+        20,
+        85,
+        224,
+        49,
+        41,
+        42,
+        209
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "depth"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                57,
+                251,
+                5,
+                35,
+                107,
+                160,
+                114,
+                152,
+                75,
+                225,
+                111,
+                190,
+                235,
+                239,
+                12,
+                50,
+                63,
+                167,
+                42,
+                8,
+                239,
+                38,
+                174,
+                34,
+                7,
+                244,
+                227,
+                176,
+                245,
+                163,
+                36,
+                104
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "depth"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "depth"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  100,
+                  101,
+                  112,
+                  116,
+                  104
                 ]
               },
               {
@@ -3520,6 +3782,205 @@
       ]
     },
     {
+      "name": "delegate_venue_clock",
+      "docs": [
+        "Send the clock into the rollup with the risk group it belongs to."
+      ],
+      "discriminator": [
+        216,
+        211,
+        166,
+        178,
+        212,
+        154,
+        248,
+        147
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_venue_clock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "venue_clock"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                57,
+                251,
+                5,
+                35,
+                107,
+                160,
+                114,
+                152,
+                75,
+                225,
+                111,
+                190,
+                235,
+                239,
+                12,
+                50,
+                63,
+                167,
+                42,
+                8,
+                239,
+                38,
+                174,
+                34,
+                7,
+                244,
+                227,
+                176,
+                245,
+                163,
+                36,
+                104
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_venue_clock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "venue_clock"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_venue_clock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "venue_clock"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "venue_clock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "group_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_program",
+          "address": "4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "group_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "deposit",
       "docs": [
         "Base layer: deposit collateral. One of only two instructions that move",
@@ -4312,6 +4773,96 @@
         {
           "name": "duration_secs",
           "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_depth",
+      "docs": [
+        "Base layer: create the book's public depth mirror."
+      ],
+      "discriminator": [
+        250,
+        237,
+        6,
+        194,
+        101,
+        139,
+        73,
+        72
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  100,
+                  101,
+                  112,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
         }
       ]
     },
@@ -5154,6 +5705,101 @@
       "args": [
         {
           "name": "market_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_venue_clock",
+      "docs": [
+        "Move the depth mirror into the rollup, where the book it mirrors is.",
+        "Create the venue's own monotonic clock. Run on base, before delegation."
+      ],
+      "discriminator": [
+        97,
+        165,
+        226,
+        70,
+        100,
+        75,
+        36,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "venue_clock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "group_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "group_id",
           "type": "u64"
         }
       ]
@@ -6533,6 +7179,115 @@
       ]
     },
     {
+      "name": "publish_depth",
+      "docs": [
+        "Rollup: refresh the depth mirror from the book. Permissionless — it",
+        "publishes totals per price level and never who placed them."
+      ],
+      "discriminator": [
+        127,
+        193,
+        114,
+        32,
+        66,
+        58,
+        25,
+        251
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Permissionless — a public total is nobody's secret."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "book",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  98,
+                  111,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depth",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  100,
+                  101,
+                  112,
+                  116,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "realize_pnl",
       "docs": [
         "Promote proven-backed profit from junior `pnl` into withdrawable",
@@ -6817,6 +7572,39 @@
               {
                 "kind": "account",
                 "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "venue_clock",
+          "docs": [
+            "The venue's own clock. Bound to this group by seeds: the kernel trusts",
+            "whatever slot it is handed, so a caller-supplied account here would be",
+            "a way to stall or force accrual. See `state/venue_clock.rs`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
                 "account": "Market"
               }
             ]
@@ -7158,6 +7946,124 @@
       "args": []
     },
     {
+      "name": "set_book_private",
+      "docs": [
+        "Rollup: make the book unreadable from outside. This is the",
+        "instruction that actually creates the dark book — see `set_private`."
+      ],
+      "discriminator": [
+        134,
+        150,
+        32,
+        177,
+        82,
+        239,
+        40,
+        250
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "book",
+          "docs": [
+            "sign, which this program does by seeds."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  98,
+                  111,
+                  111,
+                  107
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "market_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        }
+      ],
+      "args": [
+        {
+          "name": "market_id",
+          "type": "u64"
+        },
+        {
+          "name": "members",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "PermissionMemberArg"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "set_dark",
       "docs": [
         "Base layer, admin: flip a market between lit and dark matching."
@@ -7244,6 +8150,124 @@
         {
           "name": "dark",
           "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_portfolio_private",
+      "docs": [
+        "Rollup: hide a trader's own position, entry and liquidation price."
+      ],
+      "discriminator": [
+        46,
+        90,
+        198,
+        221,
+        74,
+        226,
+        36,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "portfolio",
+          "docs": [
+            "can hide — or expose — somebody else's position."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  112,
+                  111,
+                  114,
+                  116,
+                  102,
+                  111,
+                  108,
+                  105,
+                  111
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "permission",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "permission_program",
+          "address": "ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1"
+        }
+      ],
+      "args": [
+        {
+          "name": "members",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "PermissionMemberArg"
+              }
+            }
+          }
         }
       ]
     },
@@ -7741,6 +8765,39 @@
               }
             ]
           }
+        },
+        {
+          "name": "venue_clock",
+          "docs": [
+            "The venue's own clock. Bound to this group by seeds: the kernel trusts",
+            "whatever slot it is handed, so a caller-supplied account here would be",
+            "a way to stall or force accrual. See `state/venue_clock.rs`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  99,
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -8179,6 +9236,19 @@
       ]
     },
     {
+      "name": "BookDepth",
+      "discriminator": [
+        147,
+        150,
+        59,
+        245,
+        81,
+        203,
+        11,
+        151
+      ]
+    },
+    {
       "name": "DepositReceipt",
       "discriminator": [
         64,
@@ -8319,6 +9389,19 @@
         51,
         7,
         130
+      ]
+    },
+    {
+      "name": "VenueClock",
+      "discriminator": [
+        115,
+        211,
+        90,
+        174,
+        247,
+        164,
+        132,
+        60
       ]
     },
     {
@@ -8978,6 +10061,101 @@
       }
     },
     {
+      "name": "BookDepth",
+      "docs": [
+        "The public face of a dark book."
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "seq",
+            "docs": [
+              "Bumped on every rebuild, so a client can tell a stale read from a",
+              "quiet market."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bids",
+            "docs": [
+              "Best-first: `bids[0]` is the highest bid, `asks[0]` the lowest ask."
+            ],
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "DepthLevel"
+                  }
+                },
+                12
+              ]
+            }
+          },
+          {
+            "name": "asks",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "DepthLevel"
+                  }
+                },
+                12
+              ]
+            }
+          },
+          {
+            "name": "total_bid_lots",
+            "docs": [
+              "Everything resting, including whatever sits past the published",
+              "levels — the venue's size, which is aggregate by definition."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_ask_lots",
+            "type": "u64"
+          },
+          {
+            "name": "bid_levels",
+            "docs": [
+              "Levels actually populated on each side."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "ask_levels",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_pad",
+            "docs": [
+              "Explicit tail padding — `Pod` refuses a type the compiler had to pad."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
       "name": "BookSide",
       "docs": [
         "One side of the book: the arena plus its two list heads."
@@ -9116,6 +10294,29 @@
           },
           {
             "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepthLevel",
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "price_in_ticks",
+            "type": "u64"
+          },
+          {
+            "name": "base_lots",
+            "docs": [
+              "Total base lots resting at this price, across every order."
+            ],
             "type": "u64"
           }
         ]
@@ -9902,6 +11103,29 @@
           },
           {
             "name": "flags",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermissionMemberArg",
+      "docs": [
+        "A reader of a private account, and what they may see."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "flags",
+            "docs": [
+              "Bitmask over the SDK's observability flags (authority, logs,",
+              "balances, message, signatures)."
+            ],
             "type": "u8"
           }
         ]
@@ -10738,6 +11962,57 @@
               "Currently committed to an in-flight withdrawal and not spendable."
             ],
             "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VenueClock",
+      "docs": [
+        "The venue's monotonic clock, one per risk group.",
+        "",
+        "Travels with the risk group: delegated with it, committed with it,",
+        "undelegated with it. Separated from it only because `RiskGroup` is a fixed",
+        "byte image of the kernel header with no room to spare, and growing that",
+        "account would invalidate every venue already running."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group_id",
+            "docs": [
+              "Which risk group this clock belongs to."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "venue_slot",
+            "docs": [
+              "What the kernel is told. Only ever increases."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_raw",
+            "docs": [
+              "The last slot the host chain reported, in whatever frame it was using.",
+              "Meaningful only as the baseline for the next reading."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "frame_changes",
+            "docs": [
+              "How many times the host's clock has been seen to move backwards —",
+              "operational visibility, since each one is a validator change or a",
+              "restart and is worth noticing."
+            ],
+            "type": "u32"
           },
           {
             "name": "bump",

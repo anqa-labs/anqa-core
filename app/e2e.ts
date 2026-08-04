@@ -31,6 +31,7 @@ import {
   SYSVAR_RENT_PUBKEY,
   Transaction,
 } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -80,7 +81,7 @@ async function rpc<T>(fn: () => Promise<T>, tries = 6): Promise<T> {
 }
 
 async function main() {
-  const connection = new Connection(RPC, "confirmed");
+  const connection = baseConnection(RPC);
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8"))

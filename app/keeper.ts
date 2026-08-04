@@ -24,8 +24,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import { spawn } from "child_process";
+import bs58 from "bs58";
 import fs from "fs";
+import { teeRpcFor } from "./tee-auth";
 import { resolveFeedAccount } from "./feed";
 import os from "os";
 import path from "path";
@@ -37,7 +40,7 @@ const BTC_FEED = new PublicKey(
     : "4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo"
 );
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
-const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
+const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
 const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
 /** The cross-margin hub this market settles against (= first market's id). */
 const GROUP_ID = new BN(process.env.ANQA_GROUP ?? process.env.ANQA_DEMO_MARKET ?? 777);
@@ -68,8 +71,7 @@ process.on("uncaughtException", (e) =>
 );
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
-  const er = new Connection(ER_RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const keeper = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(
@@ -80,6 +82,9 @@ async function main() {
       )
     )
   );
+  // The TEE endpoint filters reads per account; a signed session tells
+  // it who we are. Without this the keeper reads back nulls.
+  const er = new Connection(await teeRpcFor(keeper, ER_RPC), "confirmed");
   const idl = JSON.parse(fs.readFileSync("target/idl/anqa_core.json", "utf-8"));
   const mk = (c: Connection) =>
     new Program(
@@ -103,6 +108,9 @@ async function main() {
   const oracleState = pda("anqa_oracle");
   const internalOracle = pda("anqa_int_oracle");
   const tape = pda("anqa_tape");
+  const depth = pda("anqa_depth");
+  // The venue keeps its own monotonic clock; see state/venue_clock.rs.
+  const venueClock = gpda("anqa_clock");
   // Isolated margin: portfolios are market-scoped, one per trader per market.
   const portfolioOf = (k: PublicKey) => gpda("anqa_portfolio", [k.toBuffer()]);
 
@@ -172,6 +180,7 @@ async function main() {
           assetSlots,
           oracleState,
           internalOracle,
+          venueClock,
         })
         .rpc();
       cranks++;
@@ -323,6 +332,18 @@ async function main() {
     log("commit", `risk engine + ${groupPortfolios.length} portfolio(s) checkpointed`);
   };
 
+  // depth: rebuild the book's public mirror. The book is permissioned, so
+  // only something inside the rollup that is allowed to read it can publish
+  // the aggregate — and a taker who cannot size a trade goes elsewhere, so
+  // this runs on the same tick as settlement.
+  const publishDepth = () =>
+    guard("depth", async () => {
+      await pEr.methods
+        .publishDepth()
+        .accounts({ caller: keeper.publicKey, market, book, depth })
+        .rpc();
+    });
+
   // isolated liquidation: enforce that a position can only lose the collateral
   // put behind it. The kernel liquidates per ACCOUNT, so without this a bad
   // position eats a trader's whole balance before anything fires. Anqa records
@@ -400,8 +421,79 @@ async function main() {
     }
   };
 
+
+  // The deposit rail.
+  //
+  // A deposit is two halves: USDC moves into custody on base layer, and the
+  // rollup credits the portfolio from that ledger. Only the first half is
+  // signed by the trader. If the second never lands, their money sits in the
+  // ledger uncredited, the terminal sees no collateral and asks them to
+  // deposit *again* — which is exactly what happened live, and it costs the
+  // trader real money every time they click.
+  //
+  // So the venue does not rely on the browser for it. `claim_deposit` is
+  // permissionless and idempotent by design — it derives the credit from the
+  // ledger, so anyone may run it for anyone — and this is the loop that was
+  // always implied by that design and never actually built.
+  //
+  // Only the lead keeper runs it; the ledger is group-wide, so nine keepers
+  // claiming the same deposits would be nine times the work for one result.
+  const LEDGER_BYTES = 73;
+  const claimDeposits = () =>
+    guard("deposit", async () => {
+      if (!MARKET_ID.eq(GROUP_ID)) return; // lead keeper only
+      const ledgers = await conn.getProgramAccounts(PROGRAM_ID, {
+        filters: [
+          { dataSize: LEDGER_BYTES },
+          { memcmp: { offset: 8 + 32, bytes: bs58.encode(le8(GROUP_ID)) } },
+        ],
+      });
+      for (const { account } of ledgers) {
+        const owner = new PublicKey(account.data.subarray(8, 40));
+        const deposited = account.data.readBigUInt64LE(8 + 32 + 8);
+        if (deposited === 0n) continue;
+        // Claim only what has not been credited yet. `claim_deposit` is
+        // idempotent, so sending it regardless would be harmless — but it
+        // would also be a transaction every few seconds per trader, forever,
+        // and a log line that says "credited" when nothing moved.
+        const pf: any = await pEr.account.portfolio
+          .fetch(portfolioOf(owner))
+          .catch(() => null);
+        if (!pf) continue; // no account opened yet
+        const claimed = BigInt(new BN(pf.claimedHighWater, 10, "le").toString());
+        if (deposited <= claimed) continue;
+        try {
+          await pEr.methods
+            .claimDeposit()
+            .accounts({
+              caller: keeper.publicKey,
+              market,
+              riskGroup,
+              assetSlots,
+              portfolio: portfolioOf(owner),
+              ledger: gpda("anqa_ledger", [owner.toBuffer()]),
+              receipt: null,
+              magicContext: null,
+              magicProgram: null,
+            } as never)
+            .rpc();
+          log(
+            "deposit",
+            `credited ${owner.toBase58().slice(0, 8)}… with $${(
+              Number(deposited - claimed) / 1e6
+            ).toLocaleString()}`
+          );
+        } catch {
+          // Already credited is the common case and costs one failed
+          // simulation; a missing portfolio means they have not opened an
+          // account yet. Neither is worth logging every four seconds.
+        }
+      }
+    });
+
   await relay();
   await sweep();
+  await claimDeposits();
 
   // A keeper outage leaves the kernel with an accrual-slot debt: each crank
   // advances the accrual clock by at most `max_accrual_dt_slots` (100), so a
@@ -428,7 +520,7 @@ async function main() {
       try {
         await pEr.methods
           .crank(ASSET_INDEX, new BN(0))
-          .accounts({ cranker: keeper.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
+          .accounts({ cranker: keeper.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle, venueClock })
           .rpc();
       } catch (e: any) {
         log("catchup", `· ${String(e?.message ?? e).slice(0, 90)}`);
@@ -447,13 +539,28 @@ async function main() {
   // trader — often the same one, trying to close — with nothing to cross,
   // and an IoC close against an empty side just fails. When either side goes
   // dark, re-run the maker to lay the ladder again.
+  //
+  // The watchdog backs off when the maker keeps failing. On a fixed 15s
+  // interval a maker that cannot start — a rate-limited RPC, say — gets
+  // respawned four times a minute per market forever, and nine markets doing
+  // that is enough load to *cause* the failure it is reacting to. Growing the
+  // delay after each failure lets the endpoint recover; one success resets it.
   let requoting = false;
+  let failures = 0;
+  const REQUOTE_MS = 15_000;
+  const REQUOTE_MAX_MS = 5 * 60_000;
+  const requoteDelay = () =>
+    Math.min(REQUOTE_MS * 2 ** failures, REQUOTE_MAX_MS) * (1 + Math.random() * 0.3);
+
   const requote = () =>
     guard("requote", async () => {
       if (requoting) return;
       const bk: any = await pEr.account.book.fetch(book);
       const active = (s: any) => s.orders.filter((o: any) => o.active === 1).length;
-      if (active(bk.bids) > 0 && active(bk.asks) > 0) return;
+      if (active(bk.bids) > 0 && active(bk.asks) > 0) {
+        failures = 0;
+        return;
+      }
       requoting = true;
       log("requote", "a side of the book is empty — re-running the maker");
       const child = spawn(
@@ -463,20 +570,38 @@ async function main() {
       );
       child.on("exit", (code) => {
         requoting = false;
-        log("requote", code === 0 ? "ladder restored" : `maker exited ${code}`);
+        if (code === 0) {
+          failures = 0;
+          log("requote", "ladder restored");
+        } else {
+          failures++;
+          log(
+            "requote",
+            `maker exited ${code} — next attempt in ${Math.round(requoteDelay() / 1000)}s`
+          );
+        }
       });
     });
+
+  /** Self-scheduling so the delay can grow; `setInterval` cannot back off. */
+  const scheduleRequote = () =>
+    setTimeout(async () => {
+      await requote();
+      scheduleRequote();
+    }, requoteDelay());
 
   setInterval(relay, RELAY_MS);
   setInterval(crank, CRANK_MS);
   setInterval(settle, SETTLE_MS);
+  setInterval(publishDepth, 1_500);
   setInterval(sweep, 30_000);
   setInterval(() => guard("mtm-scan", scanHolders), 15_000);
   setInterval(() => guard("mtm", markToMarket), 1_500);
   setInterval(() => guard("realize", realize), 20_000);
   setInterval(() => guard("isolated", isolatedSweep), 4_000);
+  setInterval(claimDeposits, 6_000);
   setInterval(() => guard("commit", checkpoint), 300_000);
-  setInterval(requote, 15_000);
+  scheduleRequote();
   void guard("mtm-scan", scanHolders);
 
   process.on("SIGINT", () => {

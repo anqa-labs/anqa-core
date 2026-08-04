@@ -14,6 +14,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -21,11 +22,11 @@ import path from "path";
 const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
-const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
+const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
 const GROUP = Number(process.env.ANQA_GROUP ?? 820);
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const er = new Connection(ER_RPC, "confirmed");
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8")))

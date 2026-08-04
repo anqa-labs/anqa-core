@@ -22,7 +22,7 @@ export const MAGIC_CONTEXT = new PublicKey("MagicContext111111111111111111111111
 export const BASE_RPC =
   process.env.NEXT_PUBLIC_BASE_RPC ?? "https://api.devnet.solana.com";
 export const ER_RPC =
-  process.env.NEXT_PUBLIC_ER_RPC ?? "https://devnet.magicblock.app";
+  process.env.NEXT_PUBLIC_ER_RPC ?? "https://devnet-tee.magicblock.app";
 
 /** The market the terminal trades. Set per deployment. */
 export const MARKET_ID = new BN(process.env.NEXT_PUBLIC_MARKET_ID ?? "0");

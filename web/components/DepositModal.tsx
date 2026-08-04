@@ -30,6 +30,11 @@ export function DepositModal({
 }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Deposit and withdraw are opposite directions, not two buttons on one form.
+  // Without a mode there is nothing to tell "max" which balance it means, and
+  // it silently meant the wallet — so withdrawing from a funded account with
+  // an empty wallet could not be given an amount at all.
+  const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
   const [wallet, setWallet] = useState(0);
   const [account, setAccount] = useState(0);
 
@@ -182,6 +187,26 @@ export function DepositModal({
             </span>
           </div>
 
+          <div className="flex p-0.5 bg-void border border-line rounded-lg">
+            {(["deposit", "withdraw"] as const).map((m) => (
+              <button
+                key={m}
+                disabled={!!busy}
+                onClick={() => {
+                  setMode(m);
+                  setAmount("");
+                }}
+                className={`flex-1 h-8 text-[12px] rounded-md capitalize transition-colors ${
+                  mode === m
+                    ? "bg-line text-bright"
+                    : "text-dim hover:text-text"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-center gap-2 h-11 px-3 bg-void border border-line rounded-lg focus-within:border-phoenix-soft transition-colors">
             <input
               autoFocus
@@ -192,7 +217,10 @@ export function DepositModal({
               className="tnum flex-1 min-w-0 bg-transparent text-[16px] text-bright outline-none placeholder:text-dim/50"
             />
             <button
-              onClick={() => setAmount(wallet > 0 ? wallet.toFixed(2) : "")}
+              onClick={() => {
+                const cap = mode === "deposit" ? wallet : account;
+                setAmount(cap > 0 ? cap.toFixed(2) : "");
+              }}
               className="text-[10px] text-phoenix/80 hover:text-phoenix transition-colors"
             >
               max
@@ -200,22 +228,24 @@ export function DepositModal({
             <span className="text-[11px] text-dim">USDC</span>
           </div>
 
-          <div className="flex gap-2">
-            <button
-              className="cta cta-primary flex-1 h-10 text-[13px]"
-              disabled={!!busy || !anqa.sessionKp}
-              onClick={doDeposit}
-            >
-              {busy ? `${busy}…` : "Deposit"}
-            </button>
-            <Button
-              variant="ghost"
-              disabled={!!busy || account <= 0}
-              onClick={doWithdraw}
-            >
-              Withdraw
-            </Button>
-          </div>
+          <button
+            className="cta cta-primary w-full h-10 text-[13px]"
+            disabled={
+              !!busy ||
+              (mode === "deposit" ? !anqa.sessionKp || wallet <= 0 : account <= 0)
+            }
+            onClick={mode === "deposit" ? doDeposit : doWithdraw}
+          >
+            {busy
+              ? `${busy}…`
+              : mode === "deposit"
+                ? wallet <= 0
+                  ? "No USDC in your wallet"
+                  : "Deposit"
+                : account <= 0
+                  ? "Nothing to withdraw"
+                  : "Withdraw"}
+          </button>
 
           <div className="flex items-center justify-between pt-1 border-t border-line-soft">
             <p className="text-[10px] text-dim leading-relaxed max-w-[70%]">

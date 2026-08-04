@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# keeper runtime markers
+app/.maker-funded-*
+app/.run-keepers.log

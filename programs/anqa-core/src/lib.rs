@@ -129,6 +129,56 @@ pub mod anqa_core {
         instructions::initialize_risk::handler(ctx, market_id, asset_count)
     }
 
+    /// Move the depth mirror into the rollup, where the book it mirrors is.
+    /// Create the venue's own monotonic clock. Run on base, before delegation.
+    pub fn initialize_venue_clock(
+        ctx: Context<InitializeVenueClock>,
+        group_id: u64,
+    ) -> Result<()> {
+        instructions::initialize_venue_clock::handler(ctx, group_id)
+    }
+
+    /// Send the clock into the rollup with the risk group it belongs to.
+    pub fn delegate_venue_clock(
+        ctx: Context<DelegateVenueClock>,
+        group_id: u64,
+    ) -> Result<()> {
+        instructions::initialize_venue_clock::delegate_handler(ctx, group_id)
+    }
+
+    pub fn delegate_depth(ctx: Context<DelegateDepth>, market_id: u64) -> Result<()> {
+        instructions::delegate_depth::handler(ctx, market_id)
+    }
+
+    /// Rollup: make the book unreadable from outside. This is the
+    /// instruction that actually creates the dark book — see `set_private`.
+    pub fn set_book_private(
+        ctx: Context<SetBookPrivate>,
+        market_id: u64,
+        members: Vec<PermissionMemberArg>,
+    ) -> Result<()> {
+        instructions::set_private::book_handler(ctx, market_id, members)
+    }
+
+    /// Rollup: hide a trader's own position, entry and liquidation price.
+    pub fn set_portfolio_private(
+        ctx: Context<SetPortfolioPrivate>,
+        members: Vec<PermissionMemberArg>,
+    ) -> Result<()> {
+        instructions::set_private::portfolio_handler(ctx, members)
+    }
+
+    /// Base layer: create the book's public depth mirror.
+    pub fn initialize_depth(ctx: Context<InitializeDepth>, market_id: u64) -> Result<()> {
+        instructions::publish_depth::initialize_handler(ctx, market_id)
+    }
+
+    /// Rollup: refresh the depth mirror from the book. Permissionless — it
+    /// publishes totals per price level and never who placed them.
+    pub fn publish_depth(ctx: Context<PublishDepth>) -> Result<()> {
+        instructions::publish_depth::publish_handler(ctx)
+    }
+
     /// Base layer: create the collateral vault. Never delegated to the rollup.
     pub fn initialize_vault(ctx: Context<InitializeVault>, market_id: u64) -> Result<()> {
         instructions::initialize_vault::handler(ctx, market_id)

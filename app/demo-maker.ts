@@ -26,7 +26,9 @@ import {
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
+import { teeRpcFor } from "./tee-auth";
 import os from "os";
 import path from "path";
 import { resolveFeedAccount } from "./feed";
@@ -39,7 +41,7 @@ const BTC_FEED = new PublicKey(
 );
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
-const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
+const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
 const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
 /** The cross-margin hub (= first market's id): custody + portfolio live here. */
 const GROUP_ID = new BN(process.env.ANQA_GROUP ?? process.env.ANQA_DEMO_MARKET ?? 777);
@@ -59,8 +61,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const PACE = Number(process.env.ANQA_PACE ?? 700);
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
-  const er = new Connection(ER_RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const admin = Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8")))
   );
@@ -74,6 +75,9 @@ async function main() {
     maker = Keypair.generate();
     fs.writeFileSync(makerFile, JSON.stringify(Array.from(maker.secretKey)));
   }
+  // The TEE endpoint filters reads per account; a signed session tells
+  // it who we are. Without this the keeper reads back nulls.
+  const er = new Connection(await teeRpcFor(maker, ER_RPC), "confirmed");
   console.log(`\n════ demo maker ${maker.publicKey.toBase58()} ════\n`);
 
   const mintFile = `app/.demo-mint-${GROUP_ID}.json`;
@@ -106,6 +110,9 @@ async function main() {
   const internalOracle = pda("anqa_int_oracle");
   const vault = gpda("anqa_vault");
   const tape = pda("anqa_tape");
+  const depth = pda("anqa_depth");
+  // The venue keeps its own monotonic clock; see state/venue_clock.rs.
+  const venueClock = gpda("anqa_clock");
   // Isolated margin: the maker's portfolio is scoped to ITS market.
   const portfolio = gpda("anqa_portfolio", [maker.publicKey.toBuffer()]);
   const ledger = gpda("anqa_ledger", [maker.publicKey.toBuffer()]);
@@ -123,8 +130,22 @@ async function main() {
     console.log(`  ✓  ${label}`);
   };
 
-  // Rent and gas for the maker.
-  const bal = await conn.getBalance(maker.publicKey);
+  // Rent and gas for the maker. A maker that has already been topped up stays
+  // funded, and the watchdog re-runs this script constantly — so once we have
+  // seen it funded, skip the check rather than spend an RPC call on it every
+  // respawn. On a rate-limited endpoint that call was where the maker died.
+  // The mark expires after an hour so a maker that slowly burns its gas still
+  // gets topped up — the goal is one balance check per hour per market, not
+  // never.
+  const fundedMark = `app/.maker-funded-${MARKET_ID}`;
+  const markFresh = (() => {
+    try {
+      return Date.now() - fs.statSync(fundedMark).mtimeMs < 60 * 60_000;
+    } catch {
+      return false;
+    }
+  })();
+  const bal = markFresh ? Infinity : await conn.getBalance(maker.publicKey);
   if (bal < 0.05 * LAMPORTS_PER_SOL) {
     const tx = new Transaction().add(
       SystemProgram.transfer({
@@ -136,6 +157,7 @@ async function main() {
     await anchor.web3.sendAndConfirmTransaction(conn, tx, [admin]);
     console.log("  ✓  maker funded with SOL");
   }
+  if (!markFresh) fs.writeFileSync(fundedMark, "");
 
   await step("portfolio", () => exists(portfolio), () =>
     pBase.methods.openPortfolio()
@@ -237,7 +259,7 @@ async function main() {
   await sleep(PACE);
   const ASSET_INDEX = Number(process.env.ANQA_ASSET_INDEX ?? 0);
   await pAdminEr.methods.reanchorOracle(ASSET_INDEX)
-    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
+    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle, venueClock })
     .rpc()
     .then(() => console.log("  ✓  re-anchored at a clean start"))
     .catch((e: any) => console.log("  ·  re-anchor:", String(e?.message ?? e).slice(0, 80)));
@@ -245,7 +267,7 @@ async function main() {
 
   // Fresh mark, then re-quote from scratch.
   await pAdminEr.methods.crank(ASSET_INDEX, new BN(0))
-    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle })
+    .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle, venueClock })
     .rpc().catch(() => {});
   await sleep(PACE);
   const os1: any = await pEr.account.oracleState.fetch(oracleState);
@@ -291,9 +313,14 @@ async function main() {
       }
     }
   }
-  const bk: any = await pEr.account.book.fetch(book);
-  const tp: any = await pEr.account.fillTape.fetch(tape);
-  console.log(`\n  ✓  ${rested} orders resting — book ${bk.bids.count} bid / ${bk.asks.count} ask`);
+  // The book is private and a maker is not a member of it — reading it back
+  // is a courtesy, not a requirement, so report what the venue publishes
+  // instead: the aggregate depth anyone can see.
+  const dep: any = await pEr.account.bookDepth.fetch(depth).catch(() => null);
+  const tp: any = await pEr.account.fillTape.fetch(tape).catch(() => null);
+  console.log(
+    `\n  ✓  ${rested} orders resting — published depth ${dep?.bidLevels ?? "?"} bid / ${dep?.askLevels ?? "?"} ask levels`
+  );
   console.log(`  ·  tape has ${tp.count} print(s)\n`);
 }
 

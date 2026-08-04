@@ -7,6 +7,12 @@ use ephemeral_rollups_sdk::cpi::DelegateConfig;
 pub const MARKET_SEED: &[u8] = b"anqa_market";
 pub const BOOK_SEED: &[u8] = b"anqa_book";
 pub const SEAT_SEED: &[u8] = b"anqa_seat";
+/// The book's public face: totals per price level, no owners. Unpermissioned
+/// on purpose — see `state::depth`.
+pub const DEPTH_SEED: &[u8] = b"anqa_depth";
+
+/// The venue's own monotonic clock, one per risk group.
+pub const CLOCK_SEED: &[u8] = b"anqa_clock";
 
 /// Resting-order capacity per side of the book.
 ///
@@ -62,9 +68,19 @@ pub const MAX_TRIGGERS_PER_PORTFOLIO: usize = 4;
 
 // ───────────────────────────── delegation ─────────────────────────────
 
-/// MagicBlock's shared devnet validator identity.
+/// MagicBlock's **private** devnet validator — the TEE one.
+///
+/// This is what makes the book dark, and nothing else does. On the shared
+/// validator (`MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57`) every delegated
+/// account is served to anyone who asks: a stranger can `getAccountInfo` the
+/// book and decode each resting order with its owner, exactly as they could
+/// on any lit venue. The ACL permission does not prevent that — it gates
+/// program access, not RPC reads.
+///
+/// Pinning delegations here is therefore load-bearing for the whole product,
+/// not an ops detail.
 pub const MAGICBLOCK_DEVNET_VALIDATOR: Pubkey =
-    pubkey!("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57");
+    pubkey!("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
 
 /// The validator every delegation is pinned to.
 ///

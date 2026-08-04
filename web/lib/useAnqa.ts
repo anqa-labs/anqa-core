@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnchorProvider, BN, Program, type Idl } from "@coral-xyz/anchor";
-import { useAnchorWallet } from "@solana/wallet-adapter-react";
+import { useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { keypairWallet, sessionKeypair } from "./session";
+import { rpcWithToken, teeToken } from "./teeSession";
 import { DEFAULT_MARKET_ID, marketById } from "./markets";
 import idl from "./anqa_core.json";
 import { readOpenInterest } from "./portfolio";
@@ -99,12 +100,33 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
     setState(EMPTY);
     baseCache.current = null;
   }, [mid]);
+  // The private rollup filters reads per account, so the connection has to
+  // carry an identity. Minted once from a wallet signature and cached for its
+  // 30-day life; until it arrives we read anonymously, which is enough for
+  // public accounts (markets, depth, the tape) and returns nothing for the
+  // book — the honest degradation rather than a blank screen.
+  const { signMessage } = useWallet();
+  const [erToken, setErToken] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    if (!wallet?.publicKey) {
+      setErToken(null);
+      return;
+    }
+    teeToken(ER_RPC, wallet.publicKey, signMessage)
+      .then((t) => !stop && setErToken(t))
+      .catch(() => !stop && setErToken(null));
+    return () => {
+      stop = true;
+    };
+  }, [wallet?.publicKey?.toBase58(), signMessage]);
+
   const conns = useMemo(
     () => ({
       base: new Connection(BASE_RPC, "confirmed"),
-      er: new Connection(ER_RPC, "confirmed"),
+      er: new Connection(rpcWithToken(ER_RPC, erToken), "confirmed"),
     }),
-    []
+    [erToken]
   );
 
   /**

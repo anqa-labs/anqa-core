@@ -35,10 +35,16 @@ export type MarketInfo = {
   tick: number;
 };
 
-/** Hub 880's shared collateral mint (from `app/.demo-mint-830.json`). */
-const HUB_MINT = "2F6oRP5kLdTAXeYYK7CvxUQJg3eQVvt5V6WvZXjaBmJs";
+/**
+ * Hub 900's shared collateral mint (from `app/.demo-mint-900.json`).
+ *
+ * This tracks GROUP — a stale mint here points the terminal at the right
+ * markets with the wrong collateral, which fails at deposit rather than at
+ * load, so it is worth changing both in the same edit.
+ */
+const HUB_MINT = "6MSiVChQCdqTivQgmeFKrjaL621SCSSBAHHyberLAkQr";
 
-const GROUP = 880;
+const GROUP = 900;
 
 export const MARKETS: MarketInfo[] = [
   {

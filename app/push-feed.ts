@@ -15,6 +15,7 @@
 import { HermesClient } from "@pythnetwork/hermes-client";
 import { PythSolanaReceiver } from "@pythnetwork/pyth-solana-receiver";
 import { Connection, Keypair } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import { Wallet } from "@coral-xyz/anchor";
 import fs from "fs";
 import os from "os";
@@ -50,7 +51,7 @@ async function pushOnce(receiver: PythSolanaReceiver, hermes: HermesClient) {
 }
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8"))

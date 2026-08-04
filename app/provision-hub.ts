@@ -17,7 +17,9 @@ import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { createMint, getOrCreateAssociatedTokenAccount, mintTo, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
+import { teeRpcFor } from "./tee-auth";
 import os from "os";
 import path from "path";
 import { resolveFeedCandidates } from "./feed";
@@ -25,10 +27,19 @@ import { resolveFeedCandidates } from "./feed";
 const PROGRAM_ID = new PublicKey("4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j");
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
 const ACL = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
+const MAGIC = new PublicKey("Magic11111111111111111111111111111111111111");
+/** The TEE validator — the only one whose RPC filters private accounts. */
+const TEE_VALIDATOR = new PublicKey("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo");
+const DELEGATION = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
+/** Rent for permission records comes from the validator's fee vault. */
+const feeVault = PublicKey.findProgramAddressSync(
+  [Buffer.from("magic-fee-vault"), TEE_VALIDATOR.toBuffer()],
+  DELEGATION
+)[0];
 
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
-const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet.magicblock.app";
-const GROUP = Number(process.env.ANQA_GROUP ?? 880);
+const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
+const GROUP = Number(process.env.ANQA_GROUP ?? 900);
 const DEC = 6;
 
 type Mkt = {
@@ -61,11 +72,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const PACE = Number(process.env.ANQA_PACE ?? 800);
 
 async function main() {
-  const conn = new Connection(RPC, "confirmed");
-  const er = new Connection(ER_RPC, "confirmed");
+  const conn = baseConnection(RPC);
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(JSON.parse(fs.readFileSync(path.join(os.homedir(), ".config/solana/id.json"), "utf-8")))
   );
+  // The TEE endpoint filters reads per account; a signed session tells
+  // it who we are. Without this the keeper reads back nulls.
+  const er = new Connection(await teeRpcFor(payer, ER_RPC), "confirmed");
   const idl = JSON.parse(fs.readFileSync("target/idl/anqa_core.json", "utf-8"));
   const mk = (c: Connection) =>
     new Program(idl, new anchor.AnchorProvider(c, new anchor.Wallet(payer), { commitment: "confirmed" })) as any;
@@ -313,6 +326,12 @@ async function main() {
           .rpc()
       )
     );
+    await step(`depth ${m.sym}`, () => exists(pda("anqa_depth", m.id)), () =>
+      p.methods
+        .initializeDepth(new BN(m.id))
+        .accounts({ authority: payer.publicKey, market, depth: pda("anqa_depth", m.id), systemProgram: SystemProgram.programId })
+        .rpc()
+    );
     await step(`dark ${m.sym}`, async () => (await p.account.market.fetch(market)).dark === true, () =>
       p.methods.setDark(true).accounts({ authority: payer.publicKey, market, book }).rpc()
     );
@@ -348,7 +367,37 @@ async function main() {
     await del(`oracle ${m.sym}`, "delegateInternalOracle", m.id, pda("anqa_int_oracle", m.id), "internalOracle");
     await del(`oracle state ${m.sym}`, "delegateOracleState", m.id, pda("anqa_oracle", m.id), "oracleState");
     await del(`tape ${m.sym}`, "delegateTape", m.id, pda("anqa_tape", m.id), "tape");
+    await del(`depth ${m.sym}`, "delegateDepth", m.id, pda("anqa_depth", m.id), "depth");
   }
+  // The book is only unreadable once it carries an EphemeralPermission with
+  // `private: true`, and that record can only be made inside the rollup —
+  // so this runs after delegation, against the TEE endpoint.
+  for (const m of MKTS) {
+    const book = pda("anqa_book", m.id);
+    const permission = PublicKey.findProgramAddressSync(
+      [S("permission:"), book.toBuffer()],
+      ACL
+    )[0];
+    await pEr.methods
+      .setBookPrivate(new BN(m.id), [{ pubkey: payer.publicKey, flags: 31 }])
+      .accounts({
+        payer: payer.publicKey,
+        market: pda("anqa_market", m.id),
+        authority: payer.publicKey,
+        book,
+        permission,
+        vault: feeVault,
+        magicProgram: MAGIC,
+        permissionProgram: ACL,
+      })
+      .rpc()
+      .then(() => console.log(`  ✓  book ${m.sym} is dark`))
+      .catch((e: any) =>
+        console.log(`  ·  book ${m.sym} private:`, String(e?.message ?? e).slice(0, 90))
+      );
+    await sleep(PACE);
+  }
+
   await del("risk group", "delegateRiskGroup", GROUP, gRisk, "riskGroup");
 
   // The slabs outgrew the 10,240-byte CPI allocation limit, so their
@@ -395,6 +444,7 @@ async function main() {
         assetSlots: gAssets,
         oracleState: pda("anqa_oracle", m.id),
         internalOracle: pda("anqa_int_oracle", m.id),
+        venueClock: pda("anqa_clock", GROUP),
       })
       .rpc()
       .then(() => console.log(`  ✓  ${m.sym} re-anchored (asset ${m.asset})`))
@@ -409,6 +459,7 @@ async function main() {
         assetSlots: gAssets,
         oracleState: pda("anqa_oracle", m.id),
         internalOracle: pda("anqa_int_oracle", m.id),
+        venueClock: pda("anqa_clock", GROUP),
       })
       .rpc()
       .catch((e: any) => console.log(`  ·  crank ${m.sym}:`, String(e?.message ?? e).slice(0, 70)));

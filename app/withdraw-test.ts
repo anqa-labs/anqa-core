@@ -25,6 +25,7 @@ import {
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
 } from "@solana/web3.js";
+import { baseConnection } from "./rpc";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -43,7 +44,7 @@ const le8 = (n: BN) => n.toArrayLike(Buffer, "le", 8);
 const usdc = (n: string | number) => (Number(n) / 10 ** DEC).toLocaleString();
 
 async function main() {
-  const connection = new Connection(RPC, "confirmed");
+  const connection = baseConnection(RPC);
   const payer = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(
