@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Connection } from "@solana/web3.js";
 import { Panel } from "./ui";
 import { ER_RPC, shortKey } from "@/lib/anqa";
 import type { Anqa } from "@/lib/useAnqa";
@@ -23,6 +24,17 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
   const [probes, setProbes] = useState<Probe[]>([]);
   const isTee = ER_RPC.includes("tee");
 
+  // A connection carrying **no session token** — which is the whole point.
+  //
+  // This used to probe through `anqa.conns.er`, and that connection carries
+  // the connected wallet's token. So the panel queried as *the owner* while
+  // telling the reader it was querying as a stranger, and reported the
+  // owner's account as `readable` — which reads as "anyone can see my
+  // positions", the opposite of what the venue does. A panel that exists to
+  // check the claim has to be the one thing in the app that cannot be taken
+  // on trust.
+  const anon = useMemo(() => new Connection(ER_RPC.split("?")[0], "confirmed"), []);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -39,7 +51,7 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
       for (const t of targets) {
         if (!t.key) continue;
         // An unauthenticated reader: no wallet, no membership, just an RPC.
-        const inRollup = await anqa.conns.er.getAccountInfo(t.key).catch(() => null);
+        const inRollup = await anon.getAccountInfo(t.key).catch(() => null);
         let verdict: Verdict;
         if (inRollup !== null) {
           verdict = "readable";
@@ -62,7 +74,7 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
       cancelled = true;
       clearInterval(t);
     };
-  }, [anqa.acc, anqa.conns, anqa.wallet]);
+  }, [anon, anqa.acc, anqa.conns, anqa.wallet]);
 
   return (
     <Panel title="what a stranger sees" bodyClassName="flex flex-col">
