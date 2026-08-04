@@ -62,7 +62,7 @@ export default function Terminal() {
         className="flex-1 min-h-0 grid gap-2 p-2
                    grid-cols-1
                    lg:grid-cols-[minmax(0,1fr)_300px_290px]
-                   lg:grid-rows-[minmax(0,1fr)_136px]"
+                   lg:grid-rows-[minmax(0,1fr)_168px]"
       >
         {/* The chart takes the room. The row under it is sized for its tab
             strip and a few rows of positions, not for the empty state — the
@@ -75,7 +75,7 @@ export default function Terminal() {
           <Chart anqa={anqa} />
         </div>
 
-        <div className="rise-in enter-2 min-h-[320px] lg:min-h-0 lg:col-start-2 lg:row-start-1 lg:row-span-2">
+        <div className="rise-in enter-2 min-h-[320px] lg:min-h-0 lg:col-start-2 lg:row-start-1">
           <OrderBook anqa={anqa} />
         </div>
 
@@ -86,7 +86,7 @@ export default function Terminal() {
           </div>
         </div>
 
-        <div className="rise-in enter-4 min-h-[200px] lg:min-h-0 lg:col-start-1 lg:row-start-2">
+        <div className="rise-in enter-4 min-h-[200px] lg:min-h-0 lg:col-start-1 lg:col-span-2 lg:row-start-2">
           <BottomTabs anqa={anqa} onDone={notify} onSelectMarket={selectMarket} onDeposit={() => setDepositOpen(true)} />
         </div>
       </main>
