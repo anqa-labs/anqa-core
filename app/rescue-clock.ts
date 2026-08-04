@@ -70,6 +70,16 @@ async function main() {
     console.log(`clock exists at ${c.venueSlot} (raw ${c.lastRaw})`);
   }
 
+  // Ordering matters on a fresh hub: `activate_asset` runs on base during
+  // provisioning and needs the clock to exist, but it must still be
+  // program-owned at that point. So creation and delegation are separable —
+  // create it first, provision, then send it into the rollup with the risk
+  // group it belongs to.
+  if (process.env.ANQA_CLOCK_INIT_ONLY === "1") {
+    console.log("clock created on base — provision now, then delegate");
+    return;
+  }
+
   await p.methods
     .delegateVenueClock(new BN(GROUP))
     .accounts({ payer: payer.publicKey, venueClock: clock })

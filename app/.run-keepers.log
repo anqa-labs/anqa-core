@@ -1,11 +1,11 @@
-feed pusher pid 75741
-keeper BTC (900, asset 0) pid 75742
-keeper SOL (901, asset 1) pid 75805
-keeper ETH (902, asset 2) pid 75839
-keeper XRP (903, asset 3) pid 75876
-keeper DOGE (904, asset 4) pid 75909
-keeper LINK (905, asset 5) pid 75945
-keeper AVAX (906, asset 6) pid 75984
-keeper SUI (907, asset 7) pid 76028
-keeper BNB (908, asset 8) pid 76065
+feed pusher pid 80262
+keeper BTC (910, asset 0) pid 80263
+keeper SOL (911, asset 1) pid 80393
+keeper ETH (912, asset 2) pid 80481
+keeper XRP (913, asset 3) pid 80513
+keeper DOGE (914, asset 4) pid 80591
+keeper LINK (915, asset 5) pid 80626
+keeper AVAX (916, asset 6) pid 80705
+keeper SUI (917, asset 7) pid 80827
+keeper BNB (918, asset 8) pid 80904
 all keepers launched — tail app/.keeper-<id>.log to watch one

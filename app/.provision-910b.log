@@ -1,0 +1,195 @@
+
+════ anqa cross-margin hub 910 ════
+
+  ·  collateral mint 9kv7WRLJbqbwph6RfdL1FDNJvbWsviz4D3x6f8c5BQSB
+  ·  market BTC (910, asset 0)
+  ·  market SOL (911, asset 1)
+  ·  market ETH (912, asset 2)
+  ·  market XRP (913, asset 3)
+  ·  market DOGE (914, asset 4)
+  ·  market LINK (915, asset 5)
+  ·  market AVAX (916, asset 6)
+  ·  market SUI (917, asset 7)
+  ·  market BNB (918, asset 8)
+  ·  risk engine (9 assets)
+  ✓  asset 1 (SOL) activated
+  ✓  asset 2 (ETH) activated
+  ✓  asset 3 (XRP) activated
+  ✓  asset 4 (DOGE) activated
+  ✓  asset 5 (LINK) activated
+  ✓  asset 6 (AVAX) activated
+  ✓  asset 7 (SUI) activated
+  ✓  asset 8 (BNB) activated
+  ✓  custody vault (shared)
+  ✓  insurance vault (shared)
+  ✓  minted 450000 demo USDC for insurance
+  ✓  insurance BTC (asset 0, $25,000/side)
+  ✓  insurance SOL (asset 1, $25,000/side)
+  ✓  insurance ETH (asset 2, $25,000/side)
+  ✓  insurance XRP (asset 3, $25,000/side)
+  ✓  insurance DOGE (asset 4, $25,000/side)
+  ✓  insurance LINK (asset 5, $25,000/side)
+  ✓  insurance AVAX (asset 6, $25,000/side)
+  ✓  insurance SUI (asset 7, $25,000/side)
+  ✓  insurance BNB (asset 8, $25,000/side)
+  ✓  tape BTC
+  ✓  oracle relay BTC
+  ✓  depth BTC
+  ✓  dark BTC
+  ✓  book permission BTC
+  ✓  tape SOL
+  ✓  oracle relay SOL
+  ✓  depth SOL
+  ✓  dark SOL
+  ✓  book permission SOL
+  ✓  tape ETH
+  ✓  oracle relay ETH
+  ✓  depth ETH
+  ✓  dark ETH
+  ✓  book permission ETH
+  ✓  tape XRP
+  ✓  oracle relay XRP
+  ✓  depth XRP
+  ✓  dark XRP
+  ✓  book permission XRP
+  ✓  tape DOGE
+  ✓  oracle relay DOGE
+  ✓  depth DOGE
+  ✓  dark DOGE
+  ✓  book permission DOGE
+  ✓  tape LINK
+  ✓  oracle relay LINK
+  ✓  depth LINK
+  ✓  dark LINK
+  ✓  book permission LINK
+  ✓  tape AVAX
+  ✓  oracle relay AVAX
+  ✓  depth AVAX
+  ✓  dark AVAX
+  ✓  book permission AVAX
+  ✓  tape SUI
+  ✓  oracle relay SUI
+  ✓  depth SUI
+  ✓  dark SUI
+  ✓  book permission SUI
+  ✓  tape BNB
+  ✓  oracle relay BNB
+  ✓  depth BNB
+  ✓  dark BNB
+  ✓  book permission BNB
+  ✓  book BTC delegated
+  ✓  oracle BTC delegated
+  ✓  oracle state BTC delegated
+  ✓  tape BTC delegated
+  ✓  depth BTC delegated
+  ✓  book SOL delegated
+  ✓  oracle SOL delegated
+  ✓  oracle state SOL delegated
+  ✓  tape SOL delegated
+  ✓  depth SOL delegated
+  ✓  book ETH delegated
+  ✓  oracle ETH delegated
+  ✓  oracle state ETH delegated
+  ✓  tape ETH delegated
+  ✓  depth ETH delegated
+  ✓  book XRP delegated
+  ✓  oracle XRP delegated
+  ✓  oracle state XRP delegated
+  ✓  tape XRP delegated
+  ✓  depth XRP delegated
+  ✓  book DOGE delegated
+  ✓  oracle DOGE delegated
+  ✓  oracle state DOGE delegated
+  ✓  tape DOGE delegated
+  ✓  depth DOGE delegated
+  ✓  book LINK delegated
+  ✓  oracle LINK delegated
+  ✓  oracle state LINK delegated
+  ✓  tape LINK delegated
+  ✓  depth LINK delegated
+  ✓  book AVAX delegated
+  ✓  oracle AVAX delegated
+  ✓  oracle state AVAX delegated
+  ✓  tape AVAX delegated
+  ✓  depth AVAX delegated
+  ✓  book SUI delegated
+  ✓  oracle SUI delegated
+  ✓  oracle state SUI delegated
+  ✓  tape SUI delegated
+  ✓  depth SUI delegated
+  ✓  book BNB delegated
+  ✓  oracle BNB delegated
+  ✓  oracle state BNB delegated
+  ✓  tape BNB delegated
+  ✓  depth BNB delegated
+  ·  book BTC private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book SOL private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book ETH private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book XRP private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book DOGE private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book LINK private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book AVAX private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book SUI private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ·  book BNB private: Simulation failed. 
+Message: transaction verification error: Error processing Instruction 
+  ✓  risk group delegated
+  ✓  slab buffer sized 10240 bytes
+  ✓  slab buffer sized 15524 bytes
+  ✓  slab buffer sized 15524 bytes
+  ✓  asset slots delegated
+  ·  reanchor BTC: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank BTC: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  BTC mark $0/lot
+  ·  reanchor SOL: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank SOL: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  SOL mark $0/lot
+  ·  reanchor ETH: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank ETH: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  ETH mark $0/lot
+  ·  reanchor XRP: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank XRP: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  XRP mark $0/lot
+  ·  reanchor DOGE: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank DOGE: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  DOGE mark $0/lot
+  ·  reanchor LINK: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank LINK: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  LINK mark $0/lot
+  ·  reanchor AVAX: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank AVAX: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  AVAX mark $0/lot
+  ·  reanchor SUI: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank SUI: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  SUI mark $0/lot
+  ·  reanchor BNB: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  crank BNB: Simulation failed. 
+Message: transaction verification error: Transacti
+  ·  BNB mark $0/lot
+
+─── hub 910 ready ───
+NEXT_PUBLIC_COLLATERAL_MINT=9kv7WRLJbqbwph6RfdL1FDNJvbWsviz4D3x6f8c5BQSB

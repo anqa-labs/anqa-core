@@ -1,0 +1,24 @@
+
+════ anqa cross-margin hub 910 ════
+
+  ✓  collateral mint 9kv7WRLJbqbwph6RfdL1FDNJvbWsviz4D3x6f8c5BQSB
+  ✓  market BTC (910, asset 0)
+  ✓  market SOL (911, asset 1)
+  ✓  market ETH (912, asset 2)
+  ✓  market XRP (913, asset 3)
+  ✓  market DOGE (914, asset 4)
+  ✓  market LINK (915, asset 5)
+  ✓  market AVAX (916, asset 6)
+  ✓  market SUI (917, asset 7)
+  ✓  market BNB (918, asset 8)
+  ✓  asset slots sized 10240 bytes
+  ✓  asset slots sized 15524 bytes
+  ✓  asset slots sized 15524 bytes
+  ✓  risk engine (9 assets)
+[
+  'Program 4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j invoke [1]',
+  'Program log: Instruction: ActivateAsset',
+  'Program log: AnchorError caused by account: venue_clock. Error Code: AccountNotInitialized. Error Number: 3012. Error Message: The program expected this account to be already initialized.',
+  'Program 4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j consumed 4754 of 200000 compute units',
+  'Program 4uLF3kQu9Hz93xKNThVdqV2H1EAdF1xy1xRKYzmi8T4j failed: custom program error: 0xbc4'
+]
