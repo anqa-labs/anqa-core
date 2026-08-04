@@ -62,11 +62,16 @@ export default function Terminal() {
         className="flex-1 min-h-0 grid gap-2 p-2
                    grid-cols-1
                    lg:grid-cols-[minmax(0,1fr)_300px_290px]
-                   lg:grid-rows-[minmax(0,1fr)_260px]"
+                   lg:grid-rows-[minmax(0,1fr)_184px]"
       >
-        {/* A real floor, not just min-h-0: stacked on a narrow window the
+        {/* The chart takes the room. The row under it is sized for its tab
+            strip and a few rows of positions, not for the empty state — the
+            price is what a trader looks at, and it was being given barely half
+            the column while "no open positions" got the rest.
+
+            A real floor, not just min-h-0: stacked on a narrow window the
             chart would otherwise collapse to nothing. */}
-        <div className="rise-in enter-1 min-h-[440px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
+        <div className="rise-in enter-1 min-h-[520px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
           <Chart anqa={anqa} />
         </div>
 
