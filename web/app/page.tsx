@@ -79,9 +79,14 @@ export default function Terminal() {
           <OrderBook anqa={anqa} />
         </div>
 
-        <div className="rise-in enter-3 flex flex-col gap-2 min-h-0 lg:col-start-3 lg:row-start-1 lg:row-span-2">
+        {/* The ticket column scrolls rather than clipping.
+            "What a stranger sees" was gated behind 2xl, so on a laptop it did
+            not exist — the one panel that states what the venue is actually
+            hiding, invisible on the machine most people open it with. It is
+            always rendered now, and the column scrolls to reach it. */}
+        <div className="rise-in enter-3 flex flex-col gap-2 min-h-0 overflow-y-auto lg:col-start-3 lg:row-start-1 lg:row-span-2">
           <TradeForm anqa={anqa} onDone={notify} onDeposit={() => setDepositOpen(true)} />
-          <div className="hidden 2xl:block min-h-0 shrink-0">
+          <div className="min-h-0 shrink-0">
             <ProofPanel anqa={anqa} />
           </div>
         </div>
