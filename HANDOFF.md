@@ -207,6 +207,41 @@ correctness problem — the keeper covers it — but it is still a latency one, 
 worth finding. `margin.ts:137` swallows the error in a bare `catch {}`, which
 is why nobody could see it.
 
+## Next: trading should not touch the wallet, and should feel instant
+
+Three things, all in the terminal, none in the program. Reported live after the
+2026-08-04 deploy.
+
+**1. Closing prompts the wallet — architectural leftover.** `closeAndSweep`
+deliberately does a wallet-signed withdrawal ("returning the money is one
+wallet signature, the same as any withdrawal"). That was right in the old
+per-market model, where collateral left behind became the next position's
+margin. With **one global account** it is wrong: closing should return
+collateral to the anqa account, session-signed, no prompt. Withdrawal should be
+a deliberate act in the account modal, not a side effect of closing.
+
+**2. Opening prompts the wallet — probable read bug.**
+`TradeForm.tsx:201-203` gates on `!portfolio`, `!portfolioDelegated`,
+`!sessionActive`. The first two are one-time, so a prompt on every order means
+`sessionActive` reads false. Check the session PDA read on the TEE endpoint
+first — that endpoint changed the same day.
+
+**3. Orders take seconds when the rollup answers in tens of milliseconds.**
+Three separate waits, none of them the rollup:
+
+- `fundMarket` runs before *every* order and does several base-layer reads
+  (`uncredited`, `collateralOf`, `ensureWalletUsdc`). Base layer is ~400ms and
+  rate-limited. It should short-circuit when the account is plainly funded.
+- **A regression added 2026-08-04:** the claim is now `await`ed with a 4s race
+  before the poll loop. If `uncredited() > 1` for any reason, every order pays
+  that 4s. It was the right fix for the hang and the wrong place to put it —
+  the keeper's rail makes the browser claim unnecessary, so it should be
+  fire-and-forget, not awaited.
+- Anchor's `.rpc()` waits for a websocket confirmation the rollup does not
+  reliably deliver. Same cause as the deposit hang. For order placement this
+  should send and confirm at `processed`, or poll the signature — not block on
+  a subscription.
+
 ## Open items
 
 1. **Restart makers/keepers on hub 900** and confirm depth is publishing.

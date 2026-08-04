@@ -150,14 +150,25 @@ export async function fundMarket(
     }
   };
 
+  // The common case, and the one that has to be fast: an account that is
+  // already open, delegated, session-granted and plainly funded needs nothing
+  // here. Checking that costs one rollup read; everything below it costs
+  // several base-layer ones, and this runs before *every* order.
+  if (!need.open && !need.delegate && !need.grant) {
+    const funded = await collateralOf(er ?? base, c);
+    if (funded >= usd - 1) return funded;
+  }
+
   // Pull in anything already paid for before asking for more money: a deposit
   // whose claim has not landed is still the trader's, and depositing again
   // would take a second bite out of their wallet for the same collateral.
   if (!need.open && (await uncredited(base, er, c)) > 1) {
     onStep?.("Crediting deposit");
-    // Bounded: the rail credits within ~6s, so give it a little longer than
-    // that and then move on rather than trapping the trader in a spinner.
-    await claim();
+    // Fire-and-forget: awaiting this put a 4s tax on *every* order, because
+    // this whole branch runs before each one. The keeper's rail credits
+    // ledger-derived deposits within seconds regardless, so the send is a
+    // nudge and the poll below is what actually establishes the credit.
+    void claim();
     for (let i = 0; i < 8; i++) {
       if ((await collateralOf(er ?? base, c)) >= usd - 1) break;
       await sleep(1500);
@@ -292,8 +303,16 @@ export async function closeAndSweep(
     throw new Error("Position closed; collateral returns once the fill settles");
   }
 
-  const left = await collateralOf(er, c);
-  if (left > 0.01) {
-    await defundMarket(base, er, c, { usd: left, mint, conn, onStep });
-  }
+  // Closing returns collateral to the *account*, not the wallet.
+  //
+  // This used to withdraw to the wallet, and that was right when portfolios
+  // were per-market: collateral left behind would silently have become the
+  // next position's margin, which the isolated model must never allow. With
+  // one global account funding every market that risk is gone — the account is
+  // where collateral is supposed to sit between trades — and withdrawing on
+  // every close meant a wallet signature to close a position, which defeats
+  // the point of holding a session.
+  //
+  // Taking money back to the wallet is now a deliberate act in the account
+  // modal, not a side effect of closing.
 }

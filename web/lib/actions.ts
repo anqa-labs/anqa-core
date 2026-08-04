@@ -1,7 +1,7 @@
 "use client";
 
 import { BN, Program } from "@coral-xyz/anchor";
-import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction , ConfirmOptions } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { ACL, DLP, MAGIC_CONTEXT, MAGIC_PROGRAM, PROGRAM_ID, type AnqaAccounts } from "./anqa";
 
@@ -297,6 +297,22 @@ export async function claimDeposit(p: Program, c: Ctx) {
 }
 
 /**
+ * Confirmation options for the rollup's own instructions.
+ *
+ * Anchor's default `.rpc()` waits for a websocket confirmation the rollup does
+ * not reliably deliver — the same behaviour that hung the deposit modal, and
+ * the reason an order that executes in tens of milliseconds took seconds to
+ * come back. `processed` is the right level here: the rollup has a single
+ * sequencer, so once it has processed the order there is nothing further to
+ * wait for.
+ */
+const ROLLUP: ConfirmOptions = {
+  commitment: "processed",
+  preflightCommitment: "processed",
+  skipPreflight: true,
+};
+
+/**
  * Place an order.
  *
  * On a **dark** market no counterparty accounts are supplied — the taker
@@ -348,7 +364,7 @@ export async function placeOrder(
         isWritable: true,
       }))
     )
-    .rpc();
+    .rpc(ROLLUP);
 }
 
 export async function cancelOrder(
@@ -366,7 +382,7 @@ export async function cancelOrder(
       book: c.acc.book,
       portfolio: c.acc.portfolioOf(c.owner),
     } as never)
-    .rpc();
+    .rpc(ROLLUP);
 }
 
 export async function cancelAll(p: Program, c: Ctx) {
@@ -379,7 +395,7 @@ export async function cancelAll(p: Program, c: Ctx) {
       book: c.acc.book,
       portfolio: c.acc.portfolioOf(c.owner),
     } as never)
-    .rpc();
+    .rpc(ROLLUP);
 }
 
 /** Reduce-only exit. Dark markets queue it like any other cross. */
@@ -407,7 +423,7 @@ export async function closePosition(
     .remainingAccounts(
       makers.map((pubkey) => ({ pubkey, isSigner: false, isWritable: true }))
     )
-    .rpc();
+    .rpc(ROLLUP);
 }
 
 /** Arm a stop / take-profit in a portfolio slot. */
@@ -448,7 +464,7 @@ export async function cancelTrigger(p: Program, c: Ctx, triggerId: BN) {
       market: c.acc.market,
       portfolio: c.acc.portfolioOf(c.owner),
     } as never)
-    .rpc();
+    .rpc(ROLLUP);
 }
 
 /**
