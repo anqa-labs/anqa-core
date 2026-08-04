@@ -14,21 +14,28 @@
  */
 
 @theme {
-  --color-void: #090a0c;
-  --color-ink: #0e0f12;
-  --color-surface: #14161a;
-  --color-raised: #1b1e24;
-  --color-line: #262a32;
-  --color-line-soft: #1e2127;
+  /* Warm-neutral dark, in the Aster register: the greys carry a trace of
+     brown rather than blue, so the greens and reds sit on top of them without
+     the whole terminal reading cold. */
+  --color-void: #0a0a0b;
+  --color-ink: #131316;
+  --color-surface: #17171a;
+  --color-raised: #1f1f24;
+  --color-line: #2a2a30;
+  --color-line-soft: #202024;
 
-  --color-dim: #646b78;
-  --color-muted: #9aa1ae;
-  --color-text: #d2d6dd;
-  --color-bright: #f4f6f9;
+  --color-dim: #6e6e78;
+  --color-muted: #9b9ba5;
+  --color-text: #d6d6db;
+  --color-bright: #f5f5f7;
 
-  --color-phoenix: #4c8dff;
-  --color-phoenix-soft: #24406e;
-  --color-ember: #5c98ff;
+  /* The accent is a warm cream, not a signal blue. It appears on one control
+     at a time — the thing the trader is meant to press — so it has to read as
+     light against near-black rather than as another colour competing with the
+     book's green and red. */
+  --color-phoenix: #e9dcbe;
+  --color-phoenix-soft: #4a4234;
+  --color-ember: #f2e8d0;
 
   --color-bid: #2ebd85;
   --color-ask: #f6465d;

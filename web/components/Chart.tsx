@@ -77,7 +77,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
     const chart = createChart(box.current, {
       layout: {
         background: { color: "transparent" },
-        textColor: "#646b78",
+        textColor: "#6e6e78",
         fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
         fontSize: 11,
         attributionLogo: false,
@@ -87,14 +87,14 @@ export function Chart({ anqa }: { anqa: Anqa }) {
         horzLines: { color: "rgba(38,42,50,0.5)" },
       },
       rightPriceScale: {
-        borderColor: "#1e2127",
+        borderColor: "#202024",
         scaleMargins: { top: 0.08, bottom: 0.26 },
       },
-      timeScale: { borderColor: "#1e2127", timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: "#202024", timeVisible: true, secondsVisible: false },
       crosshair: {
         mode: 0,
-        vertLine: { color: "#646b78", width: 1, style: 3, labelBackgroundColor: "#1b1e24" },
-        horzLine: { color: "#646b78", width: 1, style: 3, labelBackgroundColor: "#1b1e24" },
+        vertLine: { color: "#6e6e78", width: 1, style: 3, labelBackgroundColor: "#1f1f24" },
+        horzLine: { color: "#6e6e78", width: 1, style: 3, labelBackgroundColor: "#1f1f24" },
       },
       autoSize: true,
     });
@@ -107,7 +107,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
       borderDownColor: "#f6465d",
       wickUpColor: "#2ebd85",
       wickDownColor: "#f6465d",
-      priceLineColor: "#4c8dff",
+      priceLineColor: "#e9dcbe",
     });
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
@@ -243,7 +243,7 @@ export function Chart({ anqa }: { anqa: Anqa }) {
         .map((p) => ({
           time: (Math.floor(p.timestamp / secs) * secs) as UTCTimestamp,
           position: "belowBar" as const,
-          color: "#4c8dff",
+          color: "#e9dcbe",
           shape: "arrowUp" as const,
           text: `${(p.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })} @ ${(ticksToUsd(p.priceInTicks, tick) / frac).toFixed(0)}`,
         }))

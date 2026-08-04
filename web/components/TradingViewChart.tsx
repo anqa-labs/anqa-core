@@ -77,7 +77,7 @@ export const TradingViewChart = memo(function TradingViewChart({
       // A real color, not transparent: the widget derives its legend/text
       // contrast from this, and "transparent" reads as light — black text
       // on our black panel.
-      backgroundColor: "#0e0f12",
+      backgroundColor: "#131316",
       gridColor: "rgba(35,40,51,0.35)",
       hide_top_toolbar: false,
       hide_legend: false,
