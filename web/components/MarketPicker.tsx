@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BN } from "@coral-xyz/anchor";
 import { Connection } from "@solana/web3.js";
 import { anqaAccounts, ER_RPC } from "@/lib/anqa";
@@ -25,6 +26,7 @@ export function MarketPicker({
   onClose,
   onHoverIn,
   onHoverOut,
+  anchor,
 }: {
   current: number;
   onSelect: (id: number) => void;
@@ -32,6 +34,8 @@ export function MarketPicker({
   /** Hover intent, so the panel survives the cursor travelling into it. */
   onHoverIn?: () => void;
   onHoverOut?: () => void;
+  /** Where the trigger sits, in viewport coordinates. */
+  anchor?: { left: number; bottom: number };
 }) {
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -129,9 +133,19 @@ export function MarketPicker({
   // market is a glance and a click, so the venue behind it should stay
   // visible — a full-screen sheet makes a small choice feel like leaving the
   // terminal. The panel grows out of the ticker it belongs to.
-  return (
+  // Rendered at the document root, not inside the header.
+  //
+  // `z-index` only competes within its own stacking context, and the header
+  // sits in one — so however high the panel bid, the chart and the book still
+  // painted over it. A portal takes it out of that argument entirely; the
+  // trigger's rect is passed in because the panel no longer shares a
+  // coordinate space with it.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="absolute left-0 top-[calc(100%+6px)] z-50 origin-top-left animate-picker"
+      className="fixed z-[100] origin-top-left animate-picker"
+      style={{ left: anchor?.left ?? 16, top: (anchor?.bottom ?? 60) + 6 }}
       onMouseEnter={onHoverIn}
       onMouseLeave={onHoverOut}
     >
@@ -186,7 +200,8 @@ export function MarketPicker({
           <Hint keys={["Esc"]} label="Close" />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

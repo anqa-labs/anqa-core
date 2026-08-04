@@ -127,6 +127,14 @@ function MarketSelect({
   // somewhere else, and a grace period on leaving so it survives the diagonal
   // trip from the ticker down into the list.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<{ left: number; bottom: number }>();
+  // Measured on open rather than held in state: the header does not move
+  // while the panel is up, and reading it once avoids a resize listener.
+  const measure = () => {
+    const r = trigger.current?.getBoundingClientRect();
+    if (r) setAnchor({ left: r.left, bottom: r.bottom });
+  };
   const arm = (fn: () => void, ms: number) => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(fn, ms);
@@ -136,11 +144,12 @@ function MarketSelect({
   return (
     <div
       className="relative"
-      onMouseEnter={() => arm(() => setOpen(true), 120)}
+      onMouseEnter={() => arm(() => { measure(); setOpen(true); }, 120)}
       onMouseLeave={() => arm(() => setOpen(false), 180)}
     >
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={trigger}
+        onClick={() => { measure(); setOpen((o) => !o); }}
         aria-haspopup="dialog"
         aria-expanded={open}
         className="h-8 pl-3 pr-2 flex items-center gap-2 bg-void border border-line rounded-lg text-[13px] font-semibold text-bright hover:bg-raised transition-colors"
@@ -169,6 +178,7 @@ function MarketSelect({
           onClose={() => setOpen(false)}
           onHoverIn={() => timer.current && clearTimeout(timer.current)}
           onHoverOut={() => arm(() => setOpen(false), 180)}
+          anchor={anchor}
         />
       )}
     </div>
