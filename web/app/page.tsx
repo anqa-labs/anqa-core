@@ -62,7 +62,7 @@ export default function Terminal() {
         className="flex-1 min-h-0 grid gap-2 p-2
                    grid-cols-1
                    lg:grid-cols-[minmax(0,1fr)_300px_290px]
-                   lg:grid-rows-[minmax(0,1fr)_184px]"
+                   lg:grid-rows-[minmax(0,1fr)_136px]"
       >
         {/* The chart takes the room. The row under it is sized for its tab
             strip and a few rows of positions, not for the empty state — the
@@ -71,7 +71,7 @@ export default function Terminal() {
 
             A real floor, not just min-h-0: stacked on a narrow window the
             chart would otherwise collapse to nothing. */}
-        <div className="rise-in enter-1 min-h-[520px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
+        <div className="rise-in enter-1 min-h-[560px] lg:min-h-0 lg:col-start-1 lg:row-start-1">
           <Chart anqa={anqa} />
         </div>
 
