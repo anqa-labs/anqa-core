@@ -221,6 +221,60 @@ function Hint({ keys, label }: { keys: string[]; label: string }) {
   );
 }
 
+
+/**
+ * The coin's mark.
+ *
+ * Real logos where they exist, from the icon set pinned on a CDN — and a
+ * lettered badge in the asset's own colour where they do not. SUI is not in
+ * that set, so an `<img>` alone would leave a broken frame in the middle of
+ * the list; the fallback is what makes this safe to use for nine assets and
+ * whatever gets listed next.
+ */
+const BRAND: Record<string, string> = {
+  BTC: "#f7931a",
+  ETH: "#627eea",
+  SOL: "#14f195",
+  XRP: "#23292f",
+  DOGE: "#c2a633",
+  LINK: "#2a5ada",
+  AVAX: "#e84142",
+  SUI: "#4da2ff",
+  BNB: "#f0b90b",
+};
+
+export function AssetIcon({ base, size = 24 }: { base: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const tint = BRAND[base] ?? "var(--color-muted)";
+
+  if (failed) {
+    return (
+      <span
+        className="grid place-items-center rounded-full text-[9px] font-bold shrink-0"
+        style={{
+          height: size,
+          width: size,
+          background: `color-mix(in srgb, ${tint} 18%, transparent)`,
+          color: tint,
+          border: `1px solid color-mix(in srgb, ${tint} 35%, transparent)`,
+        }}
+      >
+        {base.slice(0, 3)}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/${base.toLowerCase()}.svg`}
+      alt=""
+      width={size}
+      height={size}
+      onError={() => setFailed(true)}
+      className="rounded-full shrink-0"
+    />
+  );
+}
+
 function Row({
   market,
   change,
@@ -252,9 +306,7 @@ function Row({
       } ${selected ? "shadow-[inset_2px_0_0_var(--color-phoenix)]" : ""}`}
     >
       <span className="flex items-center gap-2.5">
-        <span className="grid place-items-center h-6 w-6 rounded-full bg-void border border-line text-[9px] font-semibold text-muted">
-          {market.base.slice(0, 3)}
-        </span>
+        <AssetIcon base={market.base} />
         <span className="font-medium text-bright">{market.base}</span>
         <span className="h-4 px-1.5 grid place-items-center rounded bg-void border border-line text-[9px] text-dim">
           20x

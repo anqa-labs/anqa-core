@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Badge } from "./ui";
 import { lotFraction } from "@/lib/anqa";
 import { MARKETS } from "@/lib/markets";
-import { MarketPicker } from "./MarketPicker";
+import { AssetIcon, MarketPicker } from "./MarketPicker";
 import { usePythLive } from "@/lib/usePyth";
 import { useTickFlash, useTweened } from "@/lib/useLive";
 import type { Anqa } from "@/lib/useAnqa";
@@ -154,6 +154,7 @@ function MarketSelect({
         aria-expanded={open}
         className="h-8 pl-3 pr-2 flex items-center gap-2 bg-void border border-line rounded-lg text-[13px] font-semibold text-bright hover:bg-raised transition-colors"
       >
+        <AssetIcon base={selected.base} size={16} />
         {selected.symbol}
         <svg
           width="10"
