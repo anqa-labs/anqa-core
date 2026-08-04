@@ -116,6 +116,9 @@ export async function uncredited(
  *
  * Returns the collateral actually standing behind the market afterwards.
  */
+/** Owners whose account we have already made private in this session. */
+const hiddenThisSession = new Set<string>();
+
 export async function fundMarket(
   base: Program,
   er: Program | null,
@@ -151,6 +154,23 @@ export async function fundMarket(
       // nothing to claim, or the grant is not visible in the rollup yet
     }
   };
+
+  // Hide the account before anything else can return early.
+  //
+  // This sat after the setup step, which a funded account never reaches — so
+  // every existing account stayed readable no matter how much it traded. It
+  // belongs ahead of the fast path, not behind it.
+  //
+  // Cached per owner for the session: the permission record is created once,
+  // so this costs one rollup read on the first order and nothing after.
+  if (er && !hiddenThisSession.has(c.owner.toBase58())) {
+    if (await portfolioIsPrivate(er, c).catch(() => true)) {
+      hiddenThisSession.add(c.owner.toBase58());
+    } else {
+      await Promise.race([setPortfolioPrivate(er, c).catch(() => {}), sleep(6000)]);
+      hiddenThisSession.add(c.owner.toBase58());
+    }
+  }
 
   // The common case, and the one that has to be fast: an account that is
   // already open, delegated, session-granted and plainly funded needs nothing
@@ -202,19 +222,6 @@ export async function fundMarket(
   // failing the trade over it would be the wrong trade-off. The proof panel
   // reports the truth either way, so nobody is told they are private when they
   // are not.
-  // Not gated on "just created": an account opened before the venue started
-  // hiding them would otherwise stay readable forever. Ask the rollup whether
-  // the record exists — it is created once, so this asks once and then never
-  // again.
-  if (er && !(await portfolioIsPrivate(er, c).catch(() => true))) {
-    {
-      await Promise.race([
-        setPortfolioPrivate(er, c).catch(() => {}),
-        sleep(5000),
-      ]);
-    }
-  }
-
   if (shortfall <= 1) return already;
 
   // The deposit lands on base; the rollup credits it when the session key
