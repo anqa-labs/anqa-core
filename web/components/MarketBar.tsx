@@ -122,15 +122,36 @@ function MarketSelect({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Hover opens it, with intent on both sides: a short delay before opening so
+  // the panel does not flash as the cursor crosses the header on its way
+  // somewhere else, and a grace period on leaving so it survives the diagonal
+  // trip from the ticker down into the list.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const arm = (fn: () => void, ms: number) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(fn, ms);
+  };
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
   return (
-    <>
+    <div
+      className="relative"
+      onMouseEnter={() => arm(() => setOpen(true), 120)}
+      onMouseLeave={() => arm(() => setOpen(false), 180)}
+    >
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen((o) => !o)}
         aria-haspopup="dialog"
+        aria-expanded={open}
         className="h-8 pl-3 pr-2 flex items-center gap-2 bg-void border border-line rounded-lg text-[13px] font-semibold text-bright hover:bg-raised transition-colors"
       >
         {selected.symbol}
-        <svg width="10" height="10" viewBox="0 0 10 10" className="text-dim">
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          className={`text-dim transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+        >
           <path
             d="M2 3.5 L5 6.5 L8 3.5"
             fill="none"
@@ -142,9 +163,15 @@ function MarketSelect({
         </svg>
       </button>
       {open && (
-        <MarketPicker current={current} onSelect={onSelect} onClose={() => setOpen(false)} />
+        <MarketPicker
+          current={current}
+          onSelect={onSelect}
+          onClose={() => setOpen(false)}
+          onHoverIn={() => timer.current && clearTimeout(timer.current)}
+          onHoverOut={() => arm(() => setOpen(false), 180)}
+        />
       )}
-    </>
+    </div>
   );
 }
 

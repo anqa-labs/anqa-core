@@ -23,10 +23,15 @@ export function MarketPicker({
   current,
   onSelect,
   onClose,
+  onHoverIn,
+  onHoverOut,
 }: {
   current: number;
   onSelect: (id: number) => void;
   onClose: () => void;
+  /** Hover intent, so the panel survives the cursor travelling into it. */
+  onHoverIn?: () => void;
+  onHoverOut?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -120,12 +125,17 @@ export function MarketPicker({
     return () => window.removeEventListener("keydown", onKey);
   }, [rows, cursor, onSelect, onClose]);
 
+  // Anchored to the trigger, not thrown over the whole screen. Switching
+  // market is a glance and a click, so the venue behind it should stay
+  // visible — a full-screen sheet makes a small choice feel like leaving the
+  // terminal. The panel grows out of the ticker it belongs to.
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      className="absolute left-0 top-[calc(100%+6px)] z-50 origin-top-left animate-picker"
+      onMouseEnter={onHoverIn}
+      onMouseLeave={onHoverOut}
     >
-      <div className="mx-auto mt-[68px] w-[min(1000px,94vw)] bg-ink border border-line rounded-xl shadow-[0_24px_64px_rgba(0,0,0,0.6)] overflow-hidden">
+      <div className="w-[min(940px,92vw)] bg-ink border border-line rounded-xl shadow-[0_24px_64px_rgba(0,0,0,0.6)] overflow-hidden">
         {/* search */}
         <div className="flex items-center gap-2.5 h-12 px-4 border-b border-line-soft">
           <svg width="14" height="14" viewBox="0 0 14 14" className="text-dim shrink-0">
@@ -133,7 +143,6 @@ export function MarketPicker({
             <path d="M9.5 9.5 L13 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
           <input
-            autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search markets"
@@ -142,7 +151,7 @@ export function MarketPicker({
         </div>
 
         {/* column heads */}
-        <div className="grid grid-cols-[1.6fr_1fr_1fr_1.2fr] items-center px-4 h-9 text-[11px] text-dim border-b border-line-soft">
+        <div className="grid grid-cols-[1.6fr_1fr_1fr_1.2fr] items-center px-4 h-9 text-[11px] text-dim border-b border-line-soft picker-row">
           <span>Market</span>
           <span className="text-right">Price</span>
           <span className="text-right">24h change</span>
@@ -223,7 +232,7 @@ function Row({
     <button
       onMouseEnter={onHover}
       onClick={onPick}
-      className={`w-full grid grid-cols-[1.6fr_1fr_1fr_1.2fr] items-center px-4 py-2.5 text-[12px] text-left transition-colors ${
+      className={`picker-row w-full grid grid-cols-[1.6fr_1fr_1fr_1.2fr] items-center px-4 py-2.5 text-[12px] text-left ${
         active ? "bg-raised" : "hover:bg-raised/60"
       } ${selected ? "shadow-[inset_2px_0_0_var(--color-phoenix)]" : ""}`}
     >
