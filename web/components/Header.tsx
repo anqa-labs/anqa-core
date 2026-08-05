@@ -31,7 +31,7 @@ export function Header({ anqa, onDeposit }: { anqa: Anqa; onDeposit: () => void 
           item === "Docs" ? (
             <a
               key={item}
-              href="/how-it-works.html"
+              href="/docs"
               className="relative h-8 px-3 grid place-items-center text-[13px] rounded-md text-dim hover:text-text transition-colors"
             >
               {item}
