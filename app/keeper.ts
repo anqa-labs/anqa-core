@@ -59,7 +59,7 @@ const CRANK_MS = Number(process.env.ANQA_CRANK_MS ?? 2000);
 /** Pyth on devnet moves slowly; the relay does not need the same cadence. */
 const RELAY_MS = Number(process.env.ANQA_RELAY_MS ?? 2500);
 /** Settlement should feel immediate to whoever just traded. */
-const SETTLE_MS = Number(process.env.ANQA_SETTLE_MS ?? 1200);
+const SETTLE_MS = Number(process.env.ANQA_SETTLE_MS ?? 400);
 
 const S = (x: string) => Buffer.from(x);
 const le8 = (n: BN | number) => new BN(n).toArrayLike(Buffer, "le", 8);
@@ -140,6 +140,8 @@ async function main() {
     /** Per-market requote state; a stalled maker must not back off the others. */
     requoting: boolean;
     failures: number;
+    /** When the ladder was last re-laid for drift, so it cannot thrash. */
+    lastDrift: number;
     cranks: number;
     relays: number;
   };
@@ -178,6 +180,7 @@ async function main() {
         feed: new PublicKey(feedS),
         requoting: false,
         failures: 0,
+        lastDrift: 0,
         cranks: 0,
         relays: 0,
       };
@@ -197,6 +200,21 @@ async function main() {
   let cranks = 0;
   let prints = 0;
   let lastErr = "";
+
+  // `current_slot` is group-wide while each asset carries its own
+  // `slot_last`. If two crank/settle loops overlap, a crank for market B can
+  // advance the group clock after market A was refreshed but before A's fill
+  // executes. The kernel then (correctly) rejects A as loss-stale. Serialize
+  // the clock-sensitive work, and let settlement refresh its own asset last.
+  let riskTail: Promise<void> = Promise.resolve();
+  const riskJob = <T>(fn: () => Promise<T>): Promise<T> => {
+    const job = riskTail.catch(() => undefined).then(fn);
+    riskTail = job.then(
+      () => undefined,
+      () => undefined
+    );
+    return job;
+  };
 
   /** Never let one failure kill a loop; a keeper that exits is worse. */
   const guard = async (tag: string, fn: () => Promise<void>) => {
@@ -234,7 +252,7 @@ async function main() {
     })();
 
   // crank: inside the rollup, off the relay.
-  const crank = (m: Mkt) =>
+  const crankTx = (m: Mkt) =>
     (async () => {
       await pEr.methods
         .crank(m.asset, new BN(0))
@@ -255,39 +273,69 @@ async function main() {
         log("crank", `${m.id} ${m.cranks} ticks · mark $${(Number(os1.lastPrice) / 1e6).toLocaleString()}`);
       }
     })();
+  const crank = (m: Mkt) => riskJob(() => crankTx(m));
 
   // settle: drain whatever the book matched, oldest first.
+  //
+  // `settle_fill` sweeps every lapsed backing domain inside the fill
+  // transaction. Doing eighteen separate sweep transactions here only adds
+  // latency and creates more opportunities for another crank to move the
+  // group clock between the target asset's refresh and settlement.
   const settle = (m: Mkt) =>
     (async () => {
       const bk: any = await pEr.account.book.fetch(m.book);
       let n = Number(bk.pendingCount ?? 0);
       if (n === 0) return;
-      for (let i = 0; i < Math.min(n, 4); i++) {
-        const cur: any = await pEr.account.book.fetch(m.book);
-        if (Number(cur.pendingCount) === 0) break;
-        const head = cur.pending[cur.pendingHead];
-        await pEr.methods
-          .settleFill()
-          .accounts({
-            caller: keeper.publicKey,
-            market: m.market,
-            book: m.book,
-            riskGroup,
-            assetSlots,
-            oracleState: m.oracleState,
-            takerPortfolio: portfolioOf(new PublicKey(head.taker)),
-            makerPortfolio: portfolioOf(new PublicKey(head.maker)),
-            tape: m.tape,
-          })
-          // A settle refreshes two accounts through the kernel and its cost
-          // scales with how much accrual each must replay — the default 200k
-          // CU budget is not always enough, and a starved settle stalls the
-          // whole FIFO queue behind it.
-          .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])
-          .rpc();
-        prints++;
-        log("settle", `${m.id} ${head.baseLots}@${head.priceInTicks} · ${prints} settled`);
-      }
+      await riskJob(async () => {
+        // This must be the last clock advance before the fill. A group holds
+        // multiple assets, and cranking any neighbour makes this asset stale.
+        await crankTx(m);
+
+        for (let i = 0; i < Math.min(n, 4); i++) {
+          const cur: any = await pEr.account.book.fetch(m.book);
+          if (Number(cur.pendingCount) === 0) break;
+          const head = cur.pending[cur.pendingHead];
+          const signature = await pEr.methods
+            .settleFill()
+            .accounts({
+              caller: keeper.publicKey,
+              market: m.market,
+              book: m.book,
+              riskGroup,
+              assetSlots,
+              oracleState: m.oracleState,
+              takerPortfolio: portfolioOf(new PublicKey(head.taker)),
+              makerPortfolio: portfolioOf(new PublicKey(head.maker)),
+              tape: m.tape,
+            })
+            // A settle refreshes two accounts through the kernel and its cost
+            // scales with how much accrual each must replay — the default 200k
+            // CU budget is not always enough, and a starved settle stalls the
+            // whole FIFO queue behind it.
+            .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 })])
+            .rpc();
+
+          // A consumed refusal is an intentionally successful transaction.
+          // Inspect the program outcome before calling it a fill; the old log
+          // lied about every LockActive rejection and hid the outage.
+          const tx = await er.getTransaction(signature, {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          });
+          const logs = tx?.meta?.logMessages ?? [];
+          if (logs.some((line) => line.includes("dark fill settled"))) {
+            prints++;
+            log("settle", `${m.id} ${head.baseLots}@${head.priceInTicks} · ${prints} filled`);
+          } else {
+            const reason = logs.find((line) => line.includes("kernel refused"));
+            const reasonText = reason?.split(": ").pop() ?? "fill consumed";
+            log(
+              "reject",
+              `${m.id} ${head.baseLots}@${head.priceInTicks} · ${reasonText}`
+            );
+          }
+        }
+      });
     })();
 
   // mark-to-market: the kernel only recomputes an account's PnL when the
@@ -372,11 +420,30 @@ async function main() {
     }
   };
 
-  // checkpoint: commit the risk engine and every portfolio to base on a slow
-  // tick. Commits are explicit-only (commit_frequency_ms = u32::MAX), so
-  // base knows nothing newer than the last one — and an unplanned
-  // undelegation (validator wedge, rollup death) strands everything since.
-  // Hub 820 died exactly that way; one tick bounds the next incident.
+  // checkpoint: commit the **aggregate** risk engine to base on a slow tick.
+  // Commits are explicit-only (commit_frequency_ms = u32::MAX), so base knows
+  // nothing newer than the last one — and an unplanned undelegation (validator
+  // wedge, rollup death) strands everything since. Hub 820 died exactly that
+  // way; one tick bounds the next incident.
+  //
+  // Portfolios are deliberately **not** checkpointed here any more.
+  //
+  // A commit is a plaintext write to base layer, and base layer is public
+  // Solana — no permission record reaches it, because there is nowhere to put
+  // a filter. So checkpointing a portfolio that holds an open position
+  // publishes that position: size, entry, margin and therefore the liquidation
+  // price, to anyone who calls `getAccountInfo`. This loop was doing that for
+  // every trader in the group, on a timer, which quietly undid the venue's one
+  // real promise.
+  //
+  // The rule the venue keeps instead: **never commit a portfolio while it
+  // holds a position; commit freely once it is flat.** A flat portfolio
+  // reveals nothing base does not already know from the deposit ledger, so
+  // settlement still has a truthful point to land on. What that costs is
+  // unrealised PnL if the rollup dies mid-position — the trader exits against
+  // their last flat commit and keeps their collateral. That is the honest
+  // trade a dark venue makes, and it is bounded by the risk-group checkpoint
+  // below, which is aggregate and carries no trader's name.
   const MAGIC = {
     magicProgram: new PublicKey("Magic11111111111111111111111111111111111111"),
     magicContext: new PublicKey("MagicContext1111111111111111111111111111111"),
@@ -392,14 +459,7 @@ async function main() {
       .accounts({ payer: keeper.publicKey, assetSlots, ...MAGIC })
       .rpc()
       .catch(() => {});
-    for (const pubkey of groupPortfolios) {
-      await pEr.methods
-        .checkpointPortfolio()
-        .accounts({ payer: keeper.publicKey, portfolio: pubkey, ...MAGIC })
-        .rpc()
-        .catch(() => {});
-    }
-    log("commit", `risk engine + ${groupPortfolios.length} portfolio(s) checkpointed`);
+    log("commit", "risk engine checkpointed — portfolios left in the rollup, unpublished");
   };
 
   // depth: rebuild the book's public mirror. The book is permissioned, so
@@ -616,7 +676,10 @@ async function main() {
   // — one winner's expired winnings can wedge the asset. The kernel refuses
   // the sweep unless the bucket has actually lapsed, so calling it blind on
   // both domains is safe and cheap.
+  /** 0 disables the sweep entirely — see the note above on what it destroys. */
+  const SWEEP_MS = Number(process.env.ANQA_SWEEP_MS ?? 30_000);
   const sweep = async (m: Mkt) => {
+    if (SWEEP_MS <= 0) return;
     for (const domain of [m.asset * 2, m.asset * 2 + 1]) {
       await pEr.methods
         .sweepBacking(domain)
@@ -768,18 +831,62 @@ async function main() {
   // that starves them all and leaves every book empty.
   let makerBusy = false;
 
+  // A ladder does not have to be empty to be wrong.
+  //
+  // The maker quotes ±2…8bps around the mark and then exits — it is a
+  // one-shot, not a daemon. So when the mark walks away, the rungs stay where
+  // they were: the near side is now through the mark and free to be picked
+  // off, the far side is nowhere near tradeable, and the watchdog's original
+  // "is a side empty?" test says everything is fine, because both sides still
+  // hold orders. The book looks healthy and quotes a price that no longer
+  // exists.
+  //
+  // So drift is a requote trigger in its own right. The measure is the mid
+  // against the mark: a fresh ladder is symmetric, so any gap between the two
+  // is exactly how far the quotes have been left behind.
+  const DRIFT_BPS = Number(process.env.ANQA_REQUOTE_DRIFT_BPS ?? 5);
+  /** Floor between drift requotes. Emptiness is urgent; drift is not, and a
+   *  ladder that re-lays every tick costs transactions and cancels fills that
+   *  were about to happen. */
+  const DRIFT_MIN_MS = Number(process.env.ANQA_REQUOTE_DRIFT_MS ?? 45_000);
+
   const requote = (m: Mkt) =>
     guard("requote", async () => {
       if (makerBusy || m.requoting) return;
       const bk: any = await pEr.account.book.fetch(m.book);
       const active = (s: any) => s.orders.filter((o: any) => o.active === 1).length;
-      if (active(bk.bids) > 0 && active(bk.asks) > 0) {
+      let reason: string | null = null;
+
+      if (active(bk.bids) === 0 || active(bk.asks) === 0) {
+        reason = "a side of the book is empty";
+      } else {
+        // Both sides quoting — but are they quoting the right price?
+        const live = (s: any) =>
+          s.orders.filter((o: any) => o.active === 1).map((o: any) => Number(o.priceInTicks));
+        const bestBid = Math.max(...live(bk.bids));
+        const bestAsk = Math.min(...live(bk.asks));
+        const os1: any = await pEr.account.oracleState.fetch(m.oracleState).catch(() => null);
+        // Book prices are ticks; the oracle carries quote atoms per lot, and a
+        // tick is 1,000 of them.
+        const markTicks = os1 ? Number(os1.lastPrice) / 1_000 : 0;
+        if (markTicks > 0 && Number.isFinite(bestBid) && Number.isFinite(bestAsk)) {
+          const mid = (bestBid + bestAsk) / 2;
+          const driftBps = (Math.abs(mid - markTicks) / markTicks) * 10_000;
+          const cool = Date.now() - m.lastDrift >= DRIFT_MIN_MS;
+          if (driftBps > DRIFT_BPS && cool) {
+            reason = `quotes ${driftBps.toFixed(1)}bps off the mark (mid ${Math.round(mid)} vs ${Math.round(markTicks)})`;
+            m.lastDrift = Date.now();
+          }
+        }
+      }
+
+      if (!reason) {
         m.failures = 0;
         return;
       }
       makerBusy = true;
       m.requoting = true;
-      log("requote", `${m.id} a side of the book is empty — re-running the maker`);
+      log("requote", `${m.id} ${reason} — re-running the maker`);
       const child = spawn(
         "npx",
         ["ts-node", "--transpile-only", "app/demo-maker.ts"],
@@ -836,7 +943,7 @@ async function main() {
   every(1_500, "depth", publishDepth);
   every(2_000, "mirrors", publishOrderMirrors);
   every(4_000, "isolated", isolatedSweep);
-  every(30_000, "sweep", sweep);
+  if (SWEEP_MS > 0) every(SWEEP_MS, "sweep", sweep);
 
   // Hub-wide work: once, not once per market. This is the half that made a
   // process-per-market design cost N times more than it had any reason to.

@@ -158,11 +158,18 @@ pub fn handler<'info>(
     {
         let mut group = ctx.accounts.risk_group.load_mut()?;
         let n_assets = group.asset_count();
+        // Same inline sweep as settle_fill, same reason: this refresh must be
+        // able to crystallize the trader's losses, and a Fresh-but-lapsed
+        // bucket in any domain the account touches refuses it. See settle_fill.
+        let now_slot = group.header().current_slot.get();
         let mut slots = ctx.accounts.asset_slots.load_mut()?;
         let mut taker = ctx.accounts.portfolio.load_mut()?;
 
         let mut view =
             MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+        for domain in 0..n_assets * 2 {
+            let _ = view.expire_source_backing_bucket_not_atomic(domain, now_slot);
+        }
         let mut pv = PortfolioV16ViewMut::new(taker.account_mut());
         map_risk(view.full_account_refresh_not_atomic(&mut pv))?;
 

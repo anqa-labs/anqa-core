@@ -7,6 +7,7 @@ import { MARKETS } from "@/lib/markets";
 import { AssetIcon, MarketPicker } from "./MarketPicker";
 import { usePythLive } from "@/lib/usePyth";
 import { useTickFlash, useTweened } from "@/lib/useLive";
+import { use24h } from "@/lib/use24h";
 import type { Anqa } from "@/lib/useAnqa";
 
 /**
@@ -37,6 +38,8 @@ export function MarketBar({
     anqa.openInterest === null || perLot === null
       ? null
       : Number(anqa.openInterest) * perLot;
+  // The day's range, off the same Pyth history the chart and the mark come from.
+  const day = use24h(anqa.marketInfo.pythSymbol);
 
   // Directional feedback: color the index by its last move, flash on ticks.
   const prev = useRef<number | null>(null);
@@ -50,34 +53,36 @@ export function MarketBar({
   }, [index]);
 
   return (
-    <div className="shrink-0 flex items-center gap-5 h-14 px-4 border-b border-line-soft bg-ink overflow-x-auto">
-      <div className="flex items-center gap-2.5 shrink-0 pr-5 border-r border-line-soft h-8">
+    <div className="shrink-0 flex items-center gap-6 h-14 px-4 border-b border-line-soft bg-ink overflow-x-auto">
+      {/* pair + lead price, the way a perp terminal opens — the market you are
+          on and the number it trades at, together on the left. */}
+      <div className="flex items-center gap-3 shrink-0 pr-6 border-r border-line-soft h-9">
         <MarketSelect current={anqa.marketInfo.id} onSelect={onSelectMarket} />
-        <Badge tone="neutral">20x</Badge>
-      </div>
-
-      {/* the price — the one number that leads the room */}
-      <div className="flex flex-col gap-0.5 shrink-0">
-        <span className="text-[10px] uppercase tracking-[0.1em] text-dim">
-          Index {live !== null && <span className="text-bid">· live</span>}
-        </span>
+        <span className="text-[10px] uppercase tracking-[0.12em] text-dim">Perp</span>
         <span
           key={index ?? 0}
-          className={`tnum text-[16px] font-semibold leading-none ${
+          className={`tnum text-[17px] font-semibold leading-none ${
             dir === "up" ? "text-bid tick-up" : dir === "down" ? "text-ask tick-down" : "text-bright"
           }`}
         >
-          {index === null ? "—" : index.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {index === null
+            ? "—"
+            : index.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
+        {live !== null && (
+          <span className="live-dot w-1.5 h-1.5 rounded-full bg-bid inline-block" title="Live index" />
+        )}
       </div>
 
       <LiveStat label="Mark" value={mark} tone="phoenix" decimals={2} />
-      <LiveStat label="Open interest" value={oiUsd} hint="aggregate" prefix="$" decimals={0} />
-      <PopStat label="Fills" value={anqa.tape.length ? anqa.tapeCount : 0} hint="on the tape" />
+      <DayStat day={day} />
+      <LiveStat label="24h high" value={day?.high ?? null} decimals={2} />
+      <LiveStat label="24h low" value={day?.low ?? null} decimals={2} />
+      <LiveStat label="Open interest" value={oiUsd} prefix="$" decimals={0} />
+      <PopStat label="Fills" value={anqa.tape.length ? anqa.tapeCount : 0} />
       <PopStat
         label="Resting"
         value={anqa.hiddenBids + anqa.hiddenAsks + anqa.myBids.length + anqa.myAsks.length}
-        hint="orders, unreadable"
       />
 
       <div className="ml-auto flex items-center gap-2 shrink-0">
@@ -182,6 +187,26 @@ function MarketSelect({
           anchor={anchor}
         />
       )}
+    </div>
+  );
+}
+
+/** The day's move, signed and coloured — the first thing a trader reads after
+ *  the price itself. Absent rather than zeroed when history has not loaded. */
+function DayStat({ day }: { day: ReturnType<typeof use24h> }) {
+  const up = (day?.changePct ?? 0) >= 0;
+  return (
+    <div className="flex flex-col gap-0.5 shrink-0">
+      <span className="text-[10px] uppercase tracking-[0.1em] text-dim">24h change</span>
+      <span
+        className={`tnum text-[13px] font-medium leading-none ${
+          day === null ? "text-dim" : up ? "text-bid" : "text-ask"
+        }`}
+      >
+        {day === null
+          ? "—"
+          : `${up ? "+" : "−"}${Math.abs(day.changePct).toFixed(2)}%`}
+      </span>
     </div>
   );
 }

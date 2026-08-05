@@ -330,6 +330,24 @@ impl Portfolio {
         None
     }
 
+    /// Is this portfolio flat — no open position on any asset?
+    ///
+    /// The privacy rule turns on this. Committing a portfolio writes it to base
+    /// layer in plaintext, and base layer is public Solana where no permission
+    /// record reaches, so a commit made while a position is open publishes that
+    /// position's size, entry and margin — and therefore its liquidation price —
+    /// to anybody. A **flat** portfolio discloses nothing base does not already
+    /// know from the deposit ledger, so it is always safe to snapshot.
+    pub fn is_flat(&self) -> bool {
+        self.account().legs.iter().all(|leg_slot| {
+            match leg_slot.try_to_runtime() {
+                // A leg that will not decode is not evidence of flatness.
+                Err(_) => false,
+                Ok(leg) => !leg.active || leg.basis_pos_q == 0,
+            }
+        })
+    }
+
     /// Free collateral: equity minus margin already committed to positions and
     /// to resting orders. Zero when bankrupt or fully committed.
     pub fn free_margin(&self) -> Result<u128> {

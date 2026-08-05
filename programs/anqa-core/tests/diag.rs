@@ -105,7 +105,20 @@ fn dump_backing_buckets() {
     for (i, m) in slots.markets_mut()[..n].iter_mut().enumerate() {
         let slot = &m.engine.asset;
         let eng = &m.engine;
-        let _ = slot;
+        let asset = slot.try_to_runtime().unwrap();
+        println!(
+            "asset {i}: lifecycle {:?} modes {:?}/{:?} target {} effective {} slot_last {} OI {}/{} barriers {}/{}",
+            asset.lifecycle,
+            asset.mode_long,
+            asset.mode_short,
+            asset.raw_oracle_target_price,
+            asset.effective_price,
+            asset.slot_last,
+            asset.oi_eff_long_q,
+            asset.oi_eff_short_q,
+            eng.pending_domain_loss_barrier_long.get(),
+            eng.pending_domain_loss_barrier_short.get(),
+        );
         for (side, b) in [("long", &eng.backing_long), ("short", &eng.backing_short)] {
             let b = b.try_to_runtime().unwrap();
             println!(
@@ -130,10 +143,15 @@ fn replay_trade() {
         eprintln!("SC not set — skipping");
         return;
     };
-    let mut risk_bytes = std::fs::read(format!("{sc}/risk-802.bin")).unwrap();
-    let mut slots_bytes = std::fs::read(format!("{sc}/slots-802.bin")).unwrap();
-    let mut taker_bytes = std::fs::read(format!("{sc}/pf-taker-802.bin")).unwrap();
-    let mut maker_bytes = std::fs::read(format!("{sc}/pf-maker-802.bin")).unwrap();
+    // Fixed names by default (the 802 incident); REPLAY_* overrides replay any
+    // dumped scenario without touching this file again.
+    let f = |env: &str, def: &str| -> String {
+        std::env::var(env).unwrap_or_else(|_| format!("{sc}/{def}"))
+    };
+    let mut risk_bytes = std::fs::read(f("REPLAY_RISK", "risk-802.bin")).unwrap();
+    let mut slots_bytes = std::fs::read(f("REPLAY_SLOTS", "slots-802.bin")).unwrap();
+    let mut taker_bytes = std::fs::read(f("REPLAY_TAKER", "pf-taker-802.bin")).unwrap();
+    let mut maker_bytes = std::fs::read(f("REPLAY_MAKER", "pf-maker-802.bin")).unwrap();
 
     let risk: &mut RiskGroup = bytemuck::from_bytes_mut(&mut risk_bytes);
     let slots: &mut AssetSlots = bytemuck::from_bytes_mut(&mut slots_bytes);
@@ -158,10 +176,13 @@ fn replay_trade() {
         }
     }
 
+    let env_n = |k: &str, d: i128| -> i128 {
+        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+    };
     let req = TradeRequestV16 {
-        asset_index: 0,
-        size_q: 10i128 * POS_SCALE as i128,
-        exec_price: 63_055_000,
+        asset_index: env_n("REPLAY_ASSET", 0) as usize,
+        size_q: env_n("REPLAY_LOTS", 10) * POS_SCALE as i128,
+        exec_price: env_n("REPLAY_PRICE", 63_055_000) as u64,
         fee_bps: 0,
     };
     let mut tv = PortfolioV16ViewMut::new(taker.account_mut());

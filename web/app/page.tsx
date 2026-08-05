@@ -13,6 +13,7 @@ import { ProofPanel } from "@/components/ProofPanel";
 import { useAnqa } from "@/lib/useAnqa";
 import { lotFraction, ticksToUsd } from "@/lib/anqa";
 import { useTweened } from "@/lib/useLive";
+import type { TradeSubmission } from "@/lib/tradeActivity";
 
 type Toast = { id: number; msg: string; err?: boolean };
 
@@ -40,6 +41,21 @@ export default function Terminal() {
   const anqa = useAnqa(mid);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [depositOpen, setDepositOpen] = useState(false);
+  const [submissions, setSubmissions] = useState<TradeSubmission[]>([]);
+
+  const trackSubmission = useCallback((trade: TradeSubmission) => {
+    setSubmissions((current) => [
+      trade,
+      ...current.filter((x) => x.marketId !== trade.marketId),
+    ]);
+    window.setTimeout(() => {
+      setSubmissions((current) => current.filter((x) => x.id !== trade.id));
+    }, 45_000);
+  }, []);
+
+  const resolveSubmission = useCallback((id: number) => {
+    setSubmissions((current) => current.filter((trade) => trade.id !== id));
+  }, []);
 
   const notify = useCallback((msg: string, err = false) => {
     const id = Date.now() + Math.random();
@@ -79,20 +95,30 @@ export default function Terminal() {
           <OrderBook anqa={anqa} />
         </div>
 
-        {/* The ticket column scrolls rather than clipping.
-            "What a stranger sees" was gated behind 2xl, so on a laptop it did
-            not exist — the one panel that states what the venue is actually
-            hiding, invisible on the machine most people open it with. It is
-            always rendered now, and the column scrolls to reach it. */}
+        {/* The ticket column — just the order ticket, the way a perp terminal
+            reads. "What a stranger sees" now lives in the bottom tab strip
+            (Proof), so this column stays as calm as Aster's. */}
         <div className="rise-in enter-3 flex flex-col gap-2 min-h-0 overflow-y-auto lg:col-start-3 lg:row-start-1 lg:row-span-2">
-          <TradeForm anqa={anqa} onDone={notify} onDeposit={() => setDepositOpen(true)} />
-          <div className="min-h-0 shrink-0">
+          <TradeForm
+            anqa={anqa}
+            onDone={notify}
+            onDeposit={() => setDepositOpen(true)}
+            onSubmitted={trackSubmission}
+            onSubmissionResolved={resolveSubmission}
+          />
+          <div className="shrink-0">
             <ProofPanel anqa={anqa} />
           </div>
         </div>
 
         <div className="rise-in enter-4 min-h-[200px] lg:min-h-0 lg:col-start-1 lg:col-span-2 lg:row-start-2">
-          <BottomTabs anqa={anqa} onDone={notify} onSelectMarket={selectMarket} onDeposit={() => setDepositOpen(true)} />
+          <BottomTabs
+            anqa={anqa}
+            onDone={notify}
+            onSelectMarket={selectMarket}
+            onDeposit={() => setDepositOpen(true)}
+            submissions={submissions}
+          />
         </div>
       </main>
 
@@ -115,11 +141,15 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
         <div
           key={t.id}
           className={`toast flex items-center gap-2 px-3.5 py-2 rounded-lg border text-[12px] shadow-lg shadow-black/40 backdrop-blur-sm ${
-            t.err ? "bg-ask/12 border-ask/40 text-ask" : "bg-raised/95 border-bid/35 text-text"
+            t.err
+              ? "bg-ask/12 border-ask/40 text-ask"
+              : "bg-raised/95 border-bid/35 text-text"
           }`}
         >
           <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.err ? "bg-ask" : "bg-bid"}`}
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              t.err ? "bg-ask" : "bg-bid"
+            }`}
           />
           {t.msg}
         </div>
@@ -152,14 +182,18 @@ function Footer({ anqa }: { anqa: ReturnType<typeof useAnqa> }) {
     <footer className="shrink-0 flex items-center gap-4 h-7 px-4 border-t border-line-soft text-[10px] text-dim">
       <span>
         rollup slot{" "}
-        <span className="tnum text-muted">{slotShown === null ? "—" : Math.round(slotShown)}</span>
+        <span className="tnum text-muted">
+          {slotShown === null ? "—" : Math.round(slotShown)}
+        </span>
       </span>
       <span>
-        market <span className="tnum text-muted">{anqa.marketId.toString()}</span>
+        market{" "}
+        <span className="tnum text-muted">{anqa.marketId.toString()}</span>
       </span>
       {anqa.pendingFills > 0 && (
         <span className="text-phoenix/90 live-dot">
-          {anqa.pendingFills} fill{anqa.pendingFills > 1 ? "s" : ""} awaiting settlement
+          {anqa.pendingFills} fill{anqa.pendingFills > 1 ? "s" : ""} awaiting
+          settlement
         </span>
       )}
       {anqa.loading && <span className="text-phoenix/70">syncing…</span>}
@@ -169,12 +203,21 @@ function Footer({ anqa }: { anqa: ReturnType<typeof useAnqa> }) {
         <span className="hidden md:flex items-center gap-3 ml-4 overflow-hidden">
           <span className="uppercase tracking-[0.1em] text-[9px]">tape</span>
           {anqa.tape.slice(0, 4).map((p) => (
-            <span key={p.seq} className="print-in tnum text-muted whitespace-nowrap">
-              {(ticksToUsd(p.priceInTicks, tick) / frac).toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-              })}
+            <span
+              key={p.seq}
+              className="print-in tnum text-muted whitespace-nowrap"
+            >
+              {(ticksToUsd(p.priceInTicks, tick) / frac).toLocaleString(
+                undefined,
+                {
+                  minimumFractionDigits: 2,
+                }
+              )}
               <span className="text-dim ml-1">
-                ×{(p.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 3 })}
+                ×
+                {(p.baseLots * frac).toLocaleString(undefined, {
+                  maximumFractionDigits: 3,
+                })}
               </span>
             </span>
           ))}

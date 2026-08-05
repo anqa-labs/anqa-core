@@ -25,14 +25,17 @@ import {
   authorizeWithdraw,
   claimDeposit,
   closePosition,
+  delegatePortfolio,
   requestWithdraw,
   settleWithdraw,
   setupMarket,
-  setPortfolioPrivate,
+  permissionPortfolio,
   portfolioIsPrivate,
+  undelegatePortfolio,
 } from "./actions";
 import { equity, readKernel } from "./portfolio";
-import type { AnqaAccounts } from "./anqa";
+import { DLP, type AnqaAccounts } from "./anqa";
+import { SESSION_DURATION_SECS } from "./session";
 
 export type MoneyCtx = {
   acc: AnqaAccounts;
@@ -61,12 +64,11 @@ export async function walletUsdc(
  * same number the kernel liquidates against. Reads the rollup, because that
  * is where a delegated account is current.
  */
-export async function collateralOf(
-  p: Program,
-  c: MoneyCtx
-): Promise<number> {
+export async function collateralOf(p: Program, c: MoneyCtx): Promise<number> {
   try {
-    const pf: any = await (p as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
+    const pf: any = await (p as any).account.portfolio.fetch(
+      c.acc.portfolioOf(c.owner)
+    );
     return Number(equity(readKernel(pf.inner))) / 1e6;
   } catch {
     return 0;
@@ -94,8 +96,11 @@ export async function uncredited(
       c.acc.ledgerOf(c.owner)
     );
     const deposited = Number(ledger.deposited.toString()) / 1e6;
-    const pf: any = await ((er ?? base) as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
-    const claimed = Number(new BN(pf.claimedHighWater, 10, "le").toString()) / 1e6;
+    const pf: any = await ((er ?? base) as any).account.portfolio.fetch(
+      c.acc.portfolioOf(c.owner)
+    );
+    const claimed =
+      Number(new BN(pf.claimedHighWater, 10, "le").toString()) / 1e6;
     return Math.max(0, deposited - claimed);
   } catch {
     return 0;
@@ -116,8 +121,167 @@ export async function uncredited(
  *
  * Returns the collateral actually standing behind the market afterwards.
  */
-/** Owners whose account we have already made private in this session. */
+/** Owners whose account we have confirmed private in this session. */
 const hiddenThisSession = new Set<string>();
+
+export type PrivacyResult = "private" | "failed";
+
+/**
+ * Hide an account that is already living in the rollup.
+ *
+ * New accounts are hidden on the way in (see `setupMarket`), which is the only
+ * moment the permission can be created safely. An account already delegated
+ * has missed that moment — and permissioning it where it stands would freeze
+ * it, because the validator refuses every instruction touching a private
+ * account that was hidden after delegation.
+ *
+ * So it is walked back out and in again: commit and undelegate to base, create
+ * the permission there, then delegate once more. Undelegation is available
+ * precisely because the account is not private yet. Positions survive the trip
+ * — commit writes the portfolio's state to base and delegation carries it
+ * back — but the account is briefly readable on base while it is out, which is
+ * the honest cost of a migration and the reason new accounts never need one.
+ */
+export async function migrateToPrivate(
+  base: Program,
+  er: Program,
+  c: MoneyCtx,
+  opts: { onStep?: (s: string) => void } = {}
+): Promise<PrivacyResult> {
+  const key = c.owner.toBase58();
+  const portfolio = c.acc.portfolioOf(c.owner);
+  const conn = base.provider.connection;
+
+  if (await portfolioIsPrivate(base, c).catch(() => false)) {
+    hiddenThisSession.add(key);
+    return "private";
+  }
+
+  const info = await conn.getAccountInfo(portfolio).catch(() => null);
+  if (!info) return "failed";
+
+  if (info.owner.equals(DLP)) {
+    opts.onStep?.("Bringing your account home");
+    await undelegatePortfolio(er, c);
+    // The rollup commits, then the delegation program hands ownership back;
+    // both legs are asynchronous, so wait for base to actually show it.
+    let home = false;
+    for (let i = 0; i < 30; i++) {
+      await sleep(2000);
+      const now = await conn.getAccountInfo(portfolio).catch(() => null);
+      if (now && !now.owner.equals(DLP)) {
+        home = true;
+        break;
+      }
+    }
+    if (!home) return "failed";
+  }
+
+  opts.onStep?.("Hiding your account");
+  await permissionPortfolio(base, c);
+  for (let i = 0; i < 10; i++) {
+    await sleep(1000);
+    if (await portfolioIsPrivate(base, c).catch(() => false)) break;
+  }
+  if (!(await portfolioIsPrivate(base, c).catch(() => false))) return "failed";
+
+  opts.onStep?.("Returning it to the rollup");
+  await delegatePortfolio(base, c);
+  for (let i = 0; i < 20; i++) {
+    await sleep(2000);
+    const now = await conn.getAccountInfo(portfolio).catch(() => null);
+    if (now && now.owner.equals(DLP)) {
+      hiddenThisSession.add(key);
+      return "private";
+    }
+  }
+  return "failed";
+}
+
+/**
+ * Make the trader's portfolio dark, reliably — the fix for accounts that were
+ * delegated into the rollup while still readable by anyone.
+ *
+ * The mechanism is a **base-layer permission record** (`permissionPortfolio` →
+ * `create_portfolio_permission`), which the TEE's query filter enforces: once
+ * it exists, the portfolio reads `null` to every non-member, on base and in the
+ * rollup alike. This is the same instruction provisioning uses for the book.
+ *
+ * (The earlier attempt used the *ephemeral* `set_portfolio_private`, which fails
+ * inside MagicBlock's Magic program for a pubkey-seeded account — see
+ * `permissionPortfolio`. The base path is the one that works, verified live.)
+ *
+ * The permission can be created before or after delegation and is signed by the
+ * owner, so `base` must be an **owner-signed** base-layer program — one wallet
+ * prompt the first time, then every later call finds the record and returns
+ * `private` without a prompt. It *verifies* the record landed before claiming
+ * success, and surfaces any error instead of swallowing it — a silent failure
+ * here is how an account ended up readable in the first place.
+ */
+export async function ensurePortfolioPrivate(
+  base: Program,
+  c: MoneyCtx,
+  opts: {
+    onStep?: (s: string) => void;
+    /** Surfaces the real on-chain error instead of swallowing it. */
+    onError?: (msg: string) => void;
+  } = {}
+): Promise<PrivacyResult> {
+  const key = c.owner.toBase58();
+  if (hiddenThisSession.has(key)) return "private";
+
+  // Already hidden — the base permission record exists. One read, no signature.
+  if (await portfolioIsPrivate(base, c).catch(() => false)) {
+    hiddenThisSession.add(key);
+    return "private";
+  }
+
+  // Send exactly once per call: this needs the owner's signature, and
+  // re-sending a deterministic failure just re-prompts the wallet. Any error is
+  // surfaced, never swallowed.
+  opts.onStep?.("Making your account private");
+  try {
+    await permissionPortfolio(base, c);
+  } catch (e) {
+    opts.onError?.(await errText(e, base.provider.connection));
+    return "failed";
+  }
+
+  // Confirm the record actually exists before claiming privacy.
+  for (let i = 0; i < 8; i++) {
+    await sleep(1000);
+    if (await portfolioIsPrivate(base, c).catch(() => false)) {
+      hiddenThisSession.add(key);
+      return "private";
+    }
+  }
+  opts.onError?.("transaction sent but the permission record never appeared");
+  return "failed";
+}
+
+/**
+ * Pull the real reason out of a web3/Anchor error. Solana hides the useful
+ * part in the transaction's program logs, not the top-level message — so if
+ * this is a `SendTransactionError`, ask it for its logs (some paths populate
+ * `.logs`, others require the async `getLogs`).
+ */
+async function errText(e: unknown, conn?: Connection): Promise<string> {
+  const err = e as {
+    message?: string;
+    logs?: string[];
+    getLogs?: (c: Connection) => Promise<string[]>;
+  };
+  let logs: string[] = Array.isArray(err?.logs) ? err.logs : [];
+  if (logs.length === 0 && typeof err?.getLogs === "function" && conn) {
+    logs = await err.getLogs(conn).catch(() => []);
+  }
+  // Program-log lines name the failing account or constraint; keep the tail.
+  const relevant = logs.filter((l) =>
+    /Program log:|Error|failed|constraint|seeds|0x/i.test(l)
+  );
+  if (relevant.length) return relevant.slice(-4).join(" | ").slice(0, 400);
+  return (err?.message ?? String(e)).slice(0, 400);
+}
 
 export async function fundMarket(
   base: Program,
@@ -138,15 +302,6 @@ export async function fundMarket(
 ): Promise<number> {
   const { usd, mint, sessionKey, sessionPda, need, onStep } = args;
 
-  // One extra signature, folded into the deposit the trader is already
-  // approving — never into a trade.
-  if (args.hideAccount && er && !hiddenThisSession.has(c.owner.toBase58())) {
-    hiddenThisSession.add(c.owner.toBase58());
-    if (!(await portfolioIsPrivate(er, c).catch(() => true))) {
-      onStep?.("Making your account private");
-      await Promise.race([setPortfolioPrivate(er, c).catch(() => {}), sleep(8000)]);
-    }
-  }
   // Nudge the credit along, but never wait on it.
   //
   // Anchor's `.rpc()` waits for a websocket confirmation the rollup does not
@@ -167,15 +322,12 @@ export async function fundMarket(
     }
   };
 
-  // Making the account private needs the *owner's* signature, so it can only
-  // happen where a wallet prompt is already expected — a deposit. Never here:
-  // opening a position is session-signed and must stay instant. Putting it in
-  // this path made every first trade ask for the wallet, which is the one
-  // thing a session key exists to prevent.
   // The common case, and the one that has to be fast: an account that is
   // already open, delegated, session-granted and plainly funded needs nothing
-  // here. Checking that costs one rollup read; everything below it costs
-  // several base-layer ones, and this runs before *every* order.
+  // here — no setup, no prompt, one click. Checking that costs one rollup read;
+  // everything below it costs several base-layer ones, and this runs before
+  // *every* order. (An account delegated in a past session but never hidden is
+  // repaired from the proof panel, not here, so this fast path stays promptless.)
   if (!need.open && !need.delegate && !need.grant) {
     const funded = await collateralOf(er ?? base, c);
     if (funded >= usd - 1) return funded;
@@ -201,27 +353,26 @@ export async function fundMarket(
   const shortfall = usd - already;
 
   // Nothing to move and nothing to create: the market is ready as it stands.
-  if (shortfall <= 1 && !need.open && !need.delegate && !need.grant) return already;
+  if (shortfall <= 1 && !need.open && !need.delegate && !need.grant)
+    return already;
+
+  // Privacy is structural here, not a switch the trader can throw: the only
+  // moment an account can be hidden is on its way into the rollup, so it is
+  // folded into the same signature that opens and delegates it. Hiding it
+  // later would freeze it (see `setupMarket`), which is why there is no
+  // "make private" button anywhere in the app.
+  const needPermission =
+    need.delegate && !(await portfolioIsPrivate(base, c).catch(() => true));
 
   onStep?.(need.open ? "Opening account" : "Funding account");
   await setupMarket(base, c, {
     mint,
     depositAtoms: new BN(Math.max(0, Math.round(shortfall * 1e6))),
     sessionKey,
-    durationSecs: new BN(24 * 60 * 60),
-    need: { ...need, deposit: shortfall > 1 },
+    durationSecs: new BN(SESSION_DURATION_SECS),
+    need: { ...need, deposit: shortfall > 1, permission: needPermission },
   });
 
-  // The moment the account exists inside the rollup, hide it. Position, entry,
-  // collateral and therefore the liquidation price become the owner's alone —
-  // this is the half of the privacy a dark book does not provide on its own,
-  // and leaving it until later means every account opened in the meantime
-  // traded in the clear.
-  //
-  // Best-effort: a venue that cannot hide the account is still a venue, and
-  // failing the trade over it would be the wrong trade-off. The proof panel
-  // reports the truth either way, so nobody is told they are private when they
-  // are not.
   if (shortfall <= 1) return already;
 
   // The deposit lands on base; the rollup credits it when the session key
@@ -255,7 +406,12 @@ export async function defundMarket(
   base: Program,
   er: Program,
   c: MoneyCtx,
-  args: { usd: number; mint: PublicKey; conn: Connection; onStep?: (s: string) => void }
+  args: {
+    usd: number;
+    mint: PublicKey;
+    conn: Connection;
+    onStep?: (s: string) => void;
+  }
 ): Promise<void> {
   const { usd, mint, conn, onStep } = args;
   if (usd <= 0.01) return;
@@ -281,7 +437,9 @@ export async function defundMarket(
       return;
     }
   }
-  throw new Error("Withdrawal is taking longer than usual — check Balances in a moment");
+  throw new Error(
+    "Withdrawal is taking longer than usual — check Balances in a moment"
+  );
 }
 
 /**
@@ -321,7 +479,9 @@ export async function closeAndSweep(
   for (let i = 0; i < 24; i++) {
     await sleep(2500);
     try {
-      const pf: any = await (er as any).account.portfolio.fetch(c.acc.portfolioOf(c.owner));
+      const pf: any = await (er as any).account.portfolio.fetch(
+        c.acc.portfolioOf(c.owner)
+      );
       const k = readKernel(pf.inner);
       if (!k.positions.some((x) => x.assetIndex === assetIndex)) {
         flat = true;
@@ -332,7 +492,9 @@ export async function closeAndSweep(
     }
   }
   if (!flat) {
-    throw new Error("Position closed; collateral returns once the fill settles");
+    throw new Error(
+      "Position closed; collateral returns once the fill settles"
+    );
   }
 
   // Closing returns collateral to the *account*, not the wallet.

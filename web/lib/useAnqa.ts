@@ -85,14 +85,17 @@ const EMPTY: VenueState = {
  * a delegated account only answers from inside, an undelegated one only from
  * outside, and the terminal should not care which phase the venue is in.
  */
-export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
+export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
   const wallet = useAnchorWallet();
   const [state, setState] = useState<VenueState>(EMPTY);
   const busy = useRef(false);
 
   const marketBN = useMemo(() => new BN(mid), [mid]);
   const groupBN = useMemo(() => new BN(marketById(mid).groupId), [mid]);
-  const acc = useMemo(() => anqaAccounts(marketBN, groupBN), [marketBN, groupBN]);
+  const acc = useMemo(
+    () => anqaAccounts(marketBN, groupBN),
+    [marketBN, groupBN]
+  );
 
   // A market switch is a hard context change: wipe the view and the cached
   // base-layer picture rather than briefly showing the old market's numbers.
@@ -189,136 +192,166 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
     grant: { sessionKey: string; expiresAt: number } | null;
   } | null>(null);
 
-  const refresh = useCallback(async (opts?: { fast?: boolean }) => {
-    if (busy.current) return;
-    busy.current = true;
-    try {
-      const owner = wallet?.publicKey ?? null;
-      const ownerKey = owner?.toBase58() ?? null;
+  const refresh = useCallback(
+    async (opts?: { fast?: boolean }) => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const owner = wallet?.publicKey ?? null;
+        const ownerKey = owner?.toBase58() ?? null;
 
-      // One batched read per layer, not one RPC call per account. The public
-      // devnet endpoint rate-limits at a handful of requests per second, and
-      // a terminal that polls politely is the difference between live data
-      // and a console full of 429s.
-      const coder = programs.base.coder.accounts;
-      const dec = (name: string, info: { data: Buffer } | null | undefined) => {
-        if (!info) return null;
-        try {
-          return coder.decode(name, info.data);
-        } catch {
-          return null;
-        }
-      };
-
-      const pfKey = owner ? acc.portfolioOf(owner) : null;
-      const full =
-        !opts?.fast ||
-        !baseCache.current ||
-        baseCache.current.owner !== ownerKey ||
-        baseCache.current.mid !== mid;
-
-      if (full) {
-        const baseKeys = [
-          acc.market,
-          acc.book,
-          ...(owner ? [pfKey!, acc.ledgerOf(owner!), acc.sessionOf(owner!)] : []),
-        ];
-        const baseInfos = await conns.base
-          .getMultipleAccountsInfo(baseKeys)
-          .catch(() => baseKeys.map(() => null));
-        const [marketInfo, bookBaseInfo, pfBaseInfo, ledgerInfo, sessionInfo] = baseInfos;
-        const grantAcct = owner ? dec("tradeSession", sessionInfo) : null;
-        baseCache.current = {
-          mid,
-          owner: ownerKey,
-          // Market config is base-resident by design.
-          market: dec("market", marketInfo),
-          // Is the book delegated? Its base-layer owner answers that.
-          delegated: bookBaseInfo?.owner?.equals(DLP) ?? false,
-          // The portfolio answers from whichever side currently owns it.
-          portfolioDelegated: pfBaseInfo?.owner?.equals(DLP) ?? false,
-          ledger: owner ? dec("userDepositLedger", ledgerInfo) : null,
-          pfBaseInfo,
-          grant: grantAcct
-            ? {
-                sessionKey: grantAcct.sessionKey.toBase58(),
-                expiresAt: Number(grantAcct.expiresAt.toString()),
-              }
-            : null,
+        // One batched read per layer, not one RPC call per account. The public
+        // devnet endpoint rate-limits at a handful of requests per second, and
+        // a terminal that polls politely is the difference between live data
+        // and a console full of 429s.
+        const coder = programs.base.coder.accounts;
+        const dec = (
+          name: string,
+          info: { data: Buffer } | null | undefined
+        ) => {
+          if (!info) return null;
+          try {
+            return coder.decode(name, info.data);
+          } catch {
+            return null;
+          }
         };
-      }
-      const { market, delegated, portfolioDelegated, ledger, pfBaseInfo, grant } = baseCache.current!;
 
-      const liveConn = delegated ? conns.er : conns.base;
-      const liveKeys = [acc.oracleState, acc.book, acc.tape, acc.assetSlots];
-      if (owner && portfolioDelegated && delegated) liveKeys.push(pfKey!);
-      const liveInfos = await liveConn
-        .getMultipleAccountsInfo(liveKeys)
-        .catch(() => liveKeys.map(() => null));
-      const [oracleInfo, bookLiveInfo, tapeInfo, slotsInfo, pfErInfo] = liveInfos;
+        const pfKey = owner ? acc.portfolioOf(owner) : null;
+        const full =
+          !opts?.fast ||
+          !baseCache.current ||
+          baseCache.current.owner !== ownerKey ||
+          baseCache.current.mid !== mid;
 
-      const oracle = dec("oracleState", oracleInfo);
-      const book = dec("book", bookLiveInfo);
-      const tapeAcct = dec("fillTape", tapeInfo);
+        if (full) {
+          const baseKeys = [
+            acc.market,
+            acc.book,
+            ...(owner
+              ? [pfKey!, acc.ledgerOf(owner!), acc.sessionOf(owner!)]
+              : []),
+          ];
+          const baseInfos = await conns.base
+            .getMultipleAccountsInfo(baseKeys)
+            .catch(() => baseKeys.map(() => null));
+          const [
+            marketInfo,
+            bookBaseInfo,
+            pfBaseInfo,
+            ledgerInfo,
+            sessionInfo,
+          ] = baseInfos;
+          const grantAcct = owner ? dec("tradeSession", sessionInfo) : null;
+          baseCache.current = {
+            mid,
+            owner: ownerKey,
+            // Market config is base-resident by design.
+            market: dec("market", marketInfo),
+            // Is the book delegated? Its base-layer owner answers that.
+            delegated: bookBaseInfo?.owner?.equals(DLP) ?? false,
+            // The portfolio answers from whichever side currently owns it.
+            portfolioDelegated: pfBaseInfo?.owner?.equals(DLP) ?? false,
+            ledger: owner ? dec("userDepositLedger", ledgerInfo) : null,
+            pfBaseInfo,
+            grant: grantAcct
+              ? {
+                  sessionKey: grantAcct.sessionKey.toBase58(),
+                  expiresAt: Number(grantAcct.expiresAt.toString()),
+                }
+              : null,
+          };
+        }
+        const {
+          market,
+          delegated,
+          portfolioDelegated,
+          ledger,
+          pfBaseInfo,
+          grant,
+        } = baseCache.current!;
 
-      // Raw bytes: the kernel's engine slot is opaque to Anchor, and the
-      // one field worth publishing is aggregate open interest.
-      const openInterest = slotsInfo ? readOpenInterest(slotsInfo.data) : null;
+        const liveConn = delegated ? conns.er : conns.base;
+        const liveKeys = [acc.oracleState, acc.book, acc.tape, acc.assetSlots];
+        if (owner && portfolioDelegated && delegated) liveKeys.push(pfKey!);
+        const liveInfos = await liveConn
+          .getMultipleAccountsInfo(liveKeys)
+          .catch(() => liveKeys.map(() => null));
+        const [oracleInfo, bookLiveInfo, tapeInfo, slotsInfo, pfErInfo] =
+          liveInfos;
 
-      // A delegated portfolio under an undelegated book is the rare
-      // in-between; it pays for the one extra read it actually needs.
-      const pfInfo = !owner
-        ? null
-        : !portfolioDelegated
+        const oracle = dec("oracleState", oracleInfo);
+        const book = dec("book", bookLiveInfo);
+        const tapeAcct = dec("fillTape", tapeInfo);
+
+        // Raw bytes: the kernel's engine slot is opaque to Anchor, and the
+        // one field worth publishing is aggregate open interest.
+        const openInterest = slotsInfo
+          ? readOpenInterest(slotsInfo.data)
+          : null;
+
+        // A delegated portfolio under an undelegated book is the rare
+        // in-between; it pays for the one extra read it actually needs.
+        const pfInfo = !owner
+          ? null
+          : !portfolioDelegated
           ? pfBaseInfo
           : delegated
-            ? pfErInfo
-            : await conns.er.getAccountInfo(pfKey!).catch(() => null);
-      const portfolio = dec("portfolio", pfInfo);
+          ? pfErInfo
+          : await conns.er.getAccountInfo(pfKey!).catch(() => null);
+        const portfolio = dec("portfolio", pfInfo);
 
-      // Split what we can read into "mine" and "someone's, but not mine".
-      // On a lit market we see everything; on a dark one the book itself is
-      // unreadable to non-members, and this loop simply finds nothing.
-      let myBids: any[] = [];
-      let myAsks: any[] = [];
-      let hiddenBids = 0;
-      let hiddenAsks = 0;
-      if (book) {
-        const bids = walkSide(book.bids as never);
-        const asks = walkSide(book.asks as never);
-        const mine = (o: any) => owner && o.trader.equals(owner);
-        myBids = bids.filter(mine);
-        myAsks = asks.filter(mine);
-        hiddenBids = bids.length - myBids.length;
-        hiddenAsks = asks.length - myAsks.length;
+        // Split what we can read into "mine" and "someone's, but not mine".
+        // On a lit market we see everything; on a dark one the book itself is
+        // unreadable to non-members, and this loop simply finds nothing.
+        let myBids: any[] = [];
+        let myAsks: any[] = [];
+        let hiddenBids = 0;
+        let hiddenAsks = 0;
+        if (book) {
+          const bids = walkSide(book.bids as never);
+          const asks = walkSide(book.asks as never);
+          const mine = (o: any) => owner && o.trader.equals(owner);
+          myBids = bids.filter(mine);
+          myAsks = asks.filter(mine);
+          hiddenBids = bids.length - myBids.length;
+          hiddenAsks = asks.length - myAsks.length;
+        }
+
+        setState({
+          market,
+          delegated,
+          portfolioDelegated,
+          markPrice: oracle
+            ? Number((oracle as any).lastPrice.toString())
+            : null,
+          tape: tapeAcct ? readTape(tapeAcct as never) : [],
+          myBids,
+          myAsks,
+          hiddenBids,
+          hiddenAsks,
+          pendingFills: book ? Number((book as any).pendingCount ?? 0) : 0,
+          tapeCount: tapeAcct ? Number((tapeAcct as any).count.toString()) : 0,
+          openInterest,
+          portfolio,
+          ledger,
+          triggers: portfolio ? readTriggers((portfolio as any).triggers) : [],
+          grant,
+          loading: false,
+          error: null,
+        });
+      } catch (e: any) {
+        setState((s) => ({
+          ...s,
+          loading: false,
+          error: String(e?.message ?? e),
+        }));
+      } finally {
+        busy.current = false;
       }
-
-      setState({
-        market,
-        delegated,
-        portfolioDelegated,
-        markPrice: oracle ? Number((oracle as any).lastPrice.toString()) : null,
-        tape: tapeAcct ? readTape(tapeAcct as never) : [],
-        myBids,
-        myAsks,
-        hiddenBids,
-        hiddenAsks,
-        pendingFills: book ? Number((book as any).pendingCount ?? 0) : 0,
-        tapeCount: tapeAcct ? Number((tapeAcct as any).count.toString()) : 0,
-        openInterest,
-        portfolio,
-        ledger,
-        triggers: portfolio ? readTriggers((portfolio as any).triggers) : [],
-        grant,
-        loading: false,
-        error: null,
-      });
-    } catch (e: any) {
-      setState((s) => ({ ...s, loading: false, error: String(e?.message ?? e) }));
-    } finally {
-      busy.current = false;
-    }
-  }, [acc, conns, programs, wallet, mid]);
+    },
+    [acc, conns, programs, wallet, mid]
+  );
 
   useEffect(() => {
     // Fast ticks ride the rollup RPC alone; every eighth tick re-reads the
@@ -353,32 +386,44 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
     return new Program(
       idl as Idl,
       new AnchorProvider(conns.er, keypairWallet(sessionKp) as never, {
-        commitment: "confirmed",
+        commitment: "processed",
         skipPreflight: true,
       })
     ) as any as Program;
   }, [sessionKp, conns]);
 
-  /** The program trading calls go through: session-signed when live (no
-   *  wallet prompt), the wallet otherwise. */
+  /**
+   * The only program trading calls may go through.
+   *
+   * Deliberately never falls back to the connected wallet. A stale session
+   * should ask to be renewed once; it must not turn an ordinary order or close
+   * into a surprise wallet popup.
+   */
   const programForTrading = useCallback(() => {
     if (sessionActive && sessionKp) {
-      return new Program(
-        idl as Idl,
-        new AnchorProvider(conns.er, keypairWallet(sessionKp) as never, {
-          commitment: "confirmed",
-          skipPreflight: true,
-        })
-      ) as any as Program;
+      return sessionProgram();
     }
-    return programFor("er");
-  }, [sessionActive, sessionKp, conns, programFor]);
+    return null;
+  }, [sessionActive, sessionKp, sessionProgram]);
 
   /** Spread into a trading ctx to route signing through the session key. */
   const tradeExtra =
     sessionActive && sessionKp && wallet
-      ? { trader: sessionKp.publicKey, session: acc.sessionOf(wallet.publicKey) }
+      ? {
+          trader: sessionKp.publicKey,
+          session: acc.sessionOf(wallet.publicKey),
+        }
       : {};
+
+  /** Session accounts independent of React's cached grant read. Used directly
+   * after a grant so the first order is session-signed too. */
+  const sessionTradeExtra =
+    sessionKp && wallet
+      ? {
+          trader: sessionKp.publicKey,
+          session: acc.sessionOf(wallet.publicKey),
+        }
+      : null;
 
   return {
     ...state,
@@ -394,6 +439,7 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 1000) {
     sessionProgram,
     programForTrading,
     tradeExtra,
+    sessionTradeExtra,
   };
 }
 

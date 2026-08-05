@@ -90,6 +90,11 @@ pub enum AnqaError {
     AssetSlotsNotPrepared,
     #[msg("this market is not dark; a hidden order would conceal nothing here")]
     HiddenOrdersNotAllowed,
+    /// Raised by `checkpoint_portfolio`: committing an account that holds a
+    /// position would publish that position to public base layer, where no
+    /// permission record reaches. Close first, or leave the snapshot alone.
+    #[msg("portfolio holds an open position; committing it would publish the position on base")]
+    PositionOpen,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

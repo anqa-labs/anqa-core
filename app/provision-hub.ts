@@ -65,6 +65,11 @@ const MKTS: Mkt[] = [
   { id: GROUP + 7, asset: 7, sym: "SUI", feedHex: "23d7315113f5b1d3ba7a83604c44b94d79f4fd69af77f804fc7f920a6dc65744", feedAcct: "GgV3a7YeVRga9prjNGEDBG9NwatSaD8rwjZ4GNjPiXTq", baseDecimals: 6, lotSize: 10_000_000, tick: 1_000 },
   { id: GROUP + 8, asset: 8, sym: "BNB", feedHex: "2f95862b045670cd22bee3114c39763a4a08beeb663b145d283c31d7d1101c4f", feedAcct: "A3qp5QG9xGeJR1gexbW9b9eMMsMDLzx3rhud9SnNhwb4", baseDecimals: 6, lotSize: 100_000, tick: 1_000 },
 ];
+// One listing per asset, and the count is load-bearing: `initialize_risk` is
+// handed `MKTS.length` as the group's asset count, so an extra entry sharing
+// an existing asset index would size the engine wrong and leave the last slot
+// unactivatable. Relisting a market inside a live hub is not a thing this
+// table can express — see the 2026-08-05 hub rebuild.
 
 const S = (x: string) => Buffer.from(x);
 const le8 = (n: BN | number) => new BN(n).toArrayLike(Buffer, "le", 8);

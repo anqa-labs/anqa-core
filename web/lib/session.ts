@@ -10,7 +10,68 @@
  * radius of a leaked browser key is one account's open orders until expiry.
  */
 
-import { Keypair, PublicKey } from "@solana/web3.js";
+import {
+  Keypair,
+  PublicKey,
+  Transaction,
+  VersionedTransaction,
+} from "@solana/web3.js";
+
+/** Trade-only authority lifetime. Custody still always requires the wallet. */
+export const SESSION_DURATION_SECS = 7 * 24 * 60 * 60;
+
+type SessionReader = {
+  account: {
+    tradeSession: {
+      fetch: (address: PublicKey) => Promise<{
+        sessionKey: PublicKey;
+        expiresAt: { toString: () => string };
+      }>;
+    };
+  };
+};
+
+const verifiedGrants = new Map<string, { sessionKey: string; expiresAt: number }>();
+
+/** Covers the short window between a successful clone read and React's next
+ * base-layer refresh, preventing a second click from prompting to re-grant. */
+export function sessionGrantIsFresh(
+  address: PublicKey,
+  sessionKey: PublicKey
+): boolean {
+  const grant = verifiedGrants.get(address.toBase58());
+  return (
+    grant?.sessionKey === sessionKey.toBase58() &&
+    grant.expiresAt > Date.now() / 1000 + 60
+  );
+}
+
+/** Wait for a new or renewed base-layer grant to reach the rollup clone. */
+export async function waitForSessionGrant(
+  program: unknown,
+  address: PublicKey,
+  sessionKey: PublicKey,
+  attempts = 12
+): Promise<boolean> {
+  const reader = program as SessionReader;
+  for (let i = 0; i < attempts; i += 1) {
+    const grant = await reader.account.tradeSession
+      .fetch(address)
+      .catch(() => null);
+    if (
+      grant?.sessionKey.equals(sessionKey) &&
+      Number(grant.expiresAt.toString()) > Date.now() / 1000 + 60
+    ) {
+      verifiedGrants.set(address.toBase58(), {
+        sessionKey: sessionKey.toBase58(),
+        expiresAt: Number(grant.expiresAt.toString()),
+      });
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
 
 const storageKey = (owner: PublicKey) => `anqa-session-key-${owner.toBase58()}`;
 
@@ -34,12 +95,20 @@ export function sessionKeypair(owner: PublicKey): Keypair | null {
 export function keypairWallet(kp: Keypair) {
   return {
     publicKey: kp.publicKey,
-    signTransaction: async (tx: any) => {
-      tx.partialSign ? tx.partialSign(kp) : tx.sign([kp]);
+    signTransaction: async <T extends Transaction | VersionedTransaction>(
+      tx: T
+    ) => {
+      if (tx instanceof Transaction) tx.partialSign(kp);
+      else tx.sign([kp]);
       return tx;
     },
-    signAllTransactions: async (txs: any[]) => {
-      for (const tx of txs) tx.partialSign ? tx.partialSign(kp) : tx.sign([kp]);
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(
+      txs: T[]
+    ) => {
+      for (const tx of txs) {
+        if (tx instanceof Transaction) tx.partialSign(kp);
+        else tx.sign([kp]);
+      }
       return txs;
     },
   };

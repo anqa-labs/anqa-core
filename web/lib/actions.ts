@@ -34,7 +34,14 @@ export async function openAccount(p: Program, c: Ctx) {
     .openPortfolio()
     .accounts({
       trader: c.owner,
-      market: c.acc.market,
+      // The HUB market, never the selected one. `open_portfolio` stamps
+      // `portfolio.market_id` from whichever market it is handed, and every
+      // trading instruction then requires that tag to equal the market's
+      // `group_id`. Open the account while some other listing is selected and
+      // it is untradeable on every market, permanently — the PDA already
+      // exists, so it cannot be reopened with the right tag. The seeds are
+      // group-derived either way, so this changes the stamp, not the address.
+      market: c.acc.groupMarket,
       portfolio,
       systemProgram: SystemProgram.programId,
     })
@@ -50,7 +57,20 @@ export async function openAccount(p: Program, c: Ctx) {
     .rpc();
 }
 
-/** Make the portfolio private: only the trader and the engine may read it. */
+/**
+ * Make the portfolio private — the base-layer permission the TEE actually
+ * enforces.
+ *
+ * This is the path that works. The ephemeral `set_portfolio_private` fails
+ * inside MagicBlock's Magic program for a pubkey-seeded account, but a plain
+ * base-layer `create_portfolio_permission` — the same instruction provisioning
+ * uses for the book — makes the delegated portfolio read `null` to any
+ * non-member on the TEE. Verified live on devnet.
+ *
+ * Members: the trader (so they can read their own account) and the venue
+ * keeper (so the isolated liquidator can still see the position — lock it out
+ * and liquidations silently stop). Everyone else gets nothing.
+ */
 export async function permissionPortfolio(p: Program, c: Ctx) {
   const portfolio = c.acc.portfolioOf(c.owner);
   return p.methods
@@ -58,7 +78,7 @@ export async function permissionPortfolio(p: Program, c: Ctx) {
     // to this market's id and market account.
     .createPortfolioPermission(c.acc.groupId, [
       { pubkey: c.owner, flags: ALL_FLAGS },
-      { pubkey: c.engine, flags: ALL_FLAGS },
+      { pubkey: VENUE_KEEPER, flags: ALL_FLAGS },
     ])
     .accounts({
       trader: c.owner,
@@ -129,7 +149,14 @@ export async function setupMarket(
     depositAtoms: BN;
     sessionKey: PublicKey;
     durationSecs: BN;
-    need: { open: boolean; deposit: boolean; delegate: boolean; grant: boolean };
+    need: {
+      open: boolean;
+      deposit: boolean;
+      delegate: boolean;
+      grant: boolean;
+      /** Hide the account. Must be created BEFORE delegation — see below. */
+      permission?: boolean;
+    };
   }
 ) {
   const portfolio = c.acc.portfolioOf(c.owner);
@@ -139,8 +166,10 @@ export async function setupMarket(
   if (args.need.open) {
     ixs.push(
       await p.methods
+        // Hub market, not the selected one — see `openAccount` for why this
+        // stamp is permanent and what it breaks when it is wrong.
         .openPortfolio()
-        .accounts({ trader: c.owner, market: c.acc.market, portfolio, systemProgram: SystemProgram.programId })
+        .accounts({ trader: c.owner, market: c.acc.groupMarket, portfolio, systemProgram: SystemProgram.programId })
         .instruction(),
       await p.methods
         .initializeLedger()
@@ -172,6 +201,38 @@ export async function setupMarket(
         .instruction()
     );
   }
+  // Hide the account — and hide it *here*, before the delegation instruction
+  // below.
+  //
+  // Order is the whole trick. A permission created while the portfolio still
+  // lives on base layer travels into the rollup with it, and the TEE then
+  // filters reads while still letting the owner trade: a stranger sees `null`,
+  // the owner and the liquidation keeper see everything, and `place_order`
+  // works normally. A permission created *after* the account is already
+  // delegated does the opposite — the account goes dark and every instruction
+  // touching it, even the owner's own close, is refused 403 at the validator's
+  // ingress. That is the state that bricked accounts before this was
+  // understood; it is also exactly why the book (permissioned on base, then
+  // delegated) has always been both dark and tradeable.
+  if (args.need.permission) {
+    ixs.push(
+      await p.methods
+        .createPortfolioPermission(c.acc.groupId, [
+          { pubkey: c.owner, flags: ALL_FLAGS },
+          { pubkey: VENUE_KEEPER, flags: ALL_FLAGS },
+        ])
+        .accounts({
+          trader: c.owner,
+          market: c.acc.groupMarket,
+          portfolio,
+          permission: c.acc.permissionOf(portfolio),
+          permissionProgram: ACL,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction()
+    );
+  }
+
   if (args.need.delegate) {
     const d = c.acc.delegationOf(portfolio);
     ixs.push(
@@ -648,7 +709,7 @@ export async function portfolioIsPrivate(p: Program, c: Ctx): Promise<boolean> {
   return !!info;
 }
 
-export async function setPortfolioPrivate(p: Program, c: Ctx) {
+export async function setPortfolioPrivate(p: Program, c: Ctx, confirm: ConfirmOptions = ROLLUP) {
   const portfolio = c.acc.portfolioOf(c.owner);
   const permission = permissionOf(portfolio);
   return p.methods
@@ -665,5 +726,8 @@ export async function setPortfolioPrivate(p: Program, c: Ctx) {
       magicProgram: MAGIC_PROGRAM,
       permissionProgram: ACL_PROGRAM,
     } as never)
-    .rpc(ROLLUP);
+    // Preflight is skipped by default (the rollup validates on execution); the
+    // repair path passes a preflight-on option so a failure returns simulation
+    // logs instead of a bare "unconfirmed".
+    .rpc(confirm);
 }

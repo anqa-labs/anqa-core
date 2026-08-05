@@ -1,29 +1,38 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { BN } from "@coral-xyz/anchor";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
 import dynamic from "next/dynamic";
-import { Badge, Button } from "./ui";
+import { Badge } from "./ui";
 import { readableError } from "@/lib/anqa";
 import { placeOrder, placeTrigger } from "@/lib/actions";
 import { lotFraction, usdToTicks } from "@/lib/anqa";
-import { fundMarket, walletUsdc } from "@/lib/margin";
+import { fundMarket } from "@/lib/margin";
 import { useAllPositions } from "@/lib/useAllPositions";
 import { equity, readKernel } from "@/lib/portfolio";
+import { sessionGrantIsFresh, waitForSessionGrant } from "@/lib/session";
+import type { TradeSubmission } from "@/lib/tradeActivity";
 import type { Anqa } from "@/lib/useAnqa";
 
 const WalletButton = dynamic(
-  async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
+  async () =>
+    (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
   { ssr: false }
 );
 
 // Each market has its own collateral mint; resolved from the registry.
 
-const INITIAL_MARGIN_BPS = 500; // 20x — mirrors the on-chain constant
 const MAX_LEV = 25;
 const LEV_PRESETS = [5, 10, 15, 25];
+
+type PortfolioReader = {
+  account: {
+    portfolio: {
+      fetch: (address: PublicKey) => Promise<{ inner: number[] | Uint8Array }>;
+    };
+  };
+};
 
 /**
  * The order ticket.
@@ -42,11 +51,15 @@ export function TradeForm({
   anqa,
   onDone,
   onDeposit,
+  onSubmitted,
+  onSubmissionResolved,
 }: {
   anqa: Anqa;
   onDone: (msg: string, err?: boolean) => void;
   /** Opens the deposit dialog — shown when the account cannot cover a trade. */
   onDeposit: () => void;
+  onSubmitted: (trade: TradeSubmission) => void;
+  onSubmissionResolved: (id: number) => void;
 }) {
   const positions = useAllPositions();
   const [side, setSide] = useState<"bid" | "ask">("bid");
@@ -69,7 +82,9 @@ export function TradeForm({
   const [busy, setBusy] = useState<string | null>(null);
 
   const owner = anqa.wallet?.publicKey;
-  const MINT = anqa.marketInfo.mint ? new PublicKey(anqa.marketInfo.mint) : null;
+  const MINT = anqa.marketInfo.mint
+    ? new PublicKey(anqa.marketInfo.mint)
+    : null;
   const tick = anqa.market?.tickSize ?? 1;
   // The chain speaks per-lot prices; the trader thinks per-BTC. Everything
   // user-facing here is per-BTC USD, converted through `frac` only at the
@@ -84,31 +99,6 @@ export function TradeForm({
   // this IS the risk of any position here, so the ticket treats it as the
   // starting point and only ever asks the wallet for the difference.
   const allocated = kernel ? Number(equity(kernel)) / 1e6 : 0;
-  const hasPosition = !!kernel?.positions.some(
-    (x) => x.assetIndex === (anqa.market?.assetIndex ?? 0)
-  );
-
-  // The wallet's venue-USDC balance — the only other place money lives.
-  const [walletUsd, setWalletUsd] = useState(0);
-  useEffect(() => {
-    if (!owner || !MINT) {
-      setWalletUsd(0);
-      return;
-    }
-    let stop = false;
-    const tickBal = async () => {
-      const v = await walletUsdc(anqa.conns.base, MINT, owner);
-      if (!stop) setWalletUsd(v);
-    };
-    tickBal();
-    const t = setInterval(tickBal, 5000);
-    return () => {
-      stop = true;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [owner?.toBase58(), anqa.marketInfo.mint, busy]);
-
   /** Free balance in the account — collateral already committed to open
    *  positions is spoken for, and wallet money is not tradeable until it is
    *  deposited. This is what "max" means. */
@@ -127,8 +117,6 @@ export function TradeForm({
   const lots = perLot > 0 ? Math.floor(target / perLot) : 0;
   const sizeBtc = lots * frac;
   const notional = perLot * lots;
-  const margin = (notional * INITIAL_MARGIN_BPS) / 10_000;
-
   // What this trade would liquidate at, given the collateral being put up.
   // Isolated margin makes it exact: only `payUsd` stands behind it.
   //   long:  C + s*(P - entry) = f*s*P  ->  P = (entry - C/s) / (1 - f)
@@ -153,11 +141,16 @@ export function TradeForm({
   const bandBps: number = anqa.market?.oracle?.maxBandBps ?? 0;
   const band =
     mark !== null && bandBps > 0
-      ? { low: mark * (1 - bandBps / 10_000), high: mark * (1 + bandBps / 10_000) }
+      ? {
+          low: mark * (1 - bandBps / 10_000),
+          high: mark * (1 + bandBps / 10_000),
+        }
       : null;
   const outOfBand =
-    band !== null && type === "limit" && effPrice > 0 && (effPrice < band.low || effPrice > band.high);
-
+    band !== null &&
+    type === "limit" &&
+    effPrice > 0 &&
+    (effPrice < band.low || effPrice > band.high);
 
   /** Not enough in the account to back this trade. */
   const needsDeposit = payUsd > allocatable + 0.01;
@@ -165,61 +158,40 @@ export function TradeForm({
   const blocker = !payUsd
     ? "Enter the collateral for this trade"
     : lev <= 0
-      ? "Leverage is zero — the position is zero"
-      : type === "limit" && !Number(price)
-        ? "Price is required"
-        : lots < 1
-          ? `Below one lot — pay × leverage must reach ~$${perLot ? perLot.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}`
-          : outOfBand
-            ? `Outside the ${(bandBps / 100).toFixed(1)}% band — price must be between ${band!.low.toLocaleString(undefined, { maximumFractionDigits: 2 })} and ${band!.high.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-            // Isolated margin: Pay beyond the pot is fine — the ticket
-            // allocates the shortfall from the wallet before ordering.
-            : tpslOpen && tpN > 0 && (long ? tpN <= effPrice : tpN >= effPrice)
-                  ? `Take profit must be ${long ? "above" : "below"} the entry price`
-                  : tpslOpen && slN > 0 && (long ? slN >= effPrice : slN <= effPrice)
-                    ? `Stop loss must be ${long ? "below" : "above"} the entry price`
-                    : null;
-
-  const ctx = () => ({
-    acc: anqa.acc,
-    marketId: anqa.marketId,
-    owner: owner!,
-    engine: owner!,
-    // Routes signing through the session key once one-click is armed.
-    ...anqa.tradeExtra,
-  });
-
-  const run = async (label: string, layer: "base" | "er", fn: (p: any, c: any) => Promise<any>) => {
-    const p = anqa.programFor(layer);
-    if (!p || !owner) return;
-    setBusy(label);
-    try {
-      await fn(p, ctx());
-      onDone(`${label} done`);
-      anqa.refresh();
-    } catch (e: any) {
-      onDone(readableError(e), true);
-    } finally {
-      setBusy(null);
-    }
-  };
+    ? "Leverage is zero — the position is zero"
+    : type === "limit" && !Number(price)
+    ? "Price is required"
+    : lots < 1
+    ? `Below one lot — pay × leverage must reach ~$${
+        perLot
+          ? perLot.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : "—"
+      }`
+    : outOfBand
+    ? `Outside the ${(bandBps / 100).toFixed(
+        1
+      )}% band — price must be between ${band!.low.toLocaleString(undefined, {
+        maximumFractionDigits: 2,
+      })} and ${band!.high.toLocaleString(undefined, {
+        maximumFractionDigits: 2,
+      })}`
+    : // Isolated margin: Pay beyond the pot is fine — the ticket
+    // allocates the shortfall from the wallet before ordering.
+    tpslOpen && tpN > 0 && (long ? tpN <= effPrice : tpN >= effPrice)
+    ? `Take profit must be ${long ? "above" : "below"} the entry price`
+    : tpslOpen && slN > 0 && (long ? slN >= effPrice : slN <= effPrice)
+    ? `Stop loss must be ${long ? "below" : "above"} the entry price`
+    : null;
 
   const needOpen = !anqa.portfolio;
   const needDelegate = !anqa.portfolioDelegated;
-  const needGrant = !anqa.sessionActive;
-
-  /** Mint test USDC into the wallet when it has none — the venue's faucet. */
-  const ensureWalletUsdc = async () => {
-    if (!owner || !MINT) return;
-    if ((await walletUsdc(anqa.conns.base, MINT, owner)) > 0) return;
-    const r = await fetch("/api/faucet", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ owner: owner.toBase58(), marketId: anqa.marketInfo.id }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error ?? "Faucet failed");
-  };
+  const oneClickReady = !!(
+    anqa.sessionActive ||
+    (owner &&
+      anqa.sessionKp &&
+      sessionGrantIsFresh(anqa.acc.sessionOf(owner), anqa.sessionKp.publicKey))
+  );
+  const needGrant = !oneClickReady;
 
   /**
    * Arm TP/SL once the position exists.
@@ -229,9 +201,20 @@ export function TradeForm({
    * before the position appears. So the ticket waits for settlement and arms
    * the stops the moment there is something to protect.
    */
-  const armStops = async (wantLong: boolean, tpPrice: number, slPrice: number) => {
-    const p = anqa.programForTrading();
-    if (!p || !owner) return;
+  const armStops = async (
+    wantLong: boolean,
+    tpPrice: number,
+    slPrice: number
+  ) => {
+    const p = anqa.sessionProgram();
+    if (!p || !owner || !anqa.sessionTradeExtra) return;
+    const tradeCtx = {
+      acc: anqa.acc,
+      marketId: anqa.marketId,
+      owner,
+      engine: owner,
+      ...anqa.sessionTradeExtra,
+    };
     const pfKey = anqa.acc.portfolioOf(owner);
     const assetIndex = anqa.market?.assetIndex ?? 0;
     for (let i = 0; i < 12; i++) {
@@ -246,24 +229,30 @@ export function TradeForm({
         // Trigger prices compare against the per-lot mark; the trader typed
         // a per-BTC price, so scale through the lot fraction here.
         if (tpPrice > 0) {
-          await placeTrigger(p, ctx(), {
+          await placeTrigger(p, tradeCtx, {
             triggerId: new BN(id),
             triggerPrice: new BN(Math.round(tpPrice * frac * 1e6)),
             direction: wantLong ? "above" : "below",
             limitPriceInTicks: new BN(
-              usdToTicks((wantLong ? tpPrice * 0.97 : tpPrice * 1.03) * frac, tick)
+              usdToTicks(
+                (wantLong ? tpPrice * 0.97 : tpPrice * 1.03) * frac,
+                tick
+              )
             ),
             maxBaseLots: new BN(0), // 0 = the whole position, however much settled
           });
           armed.push(`TP $${tpPrice.toLocaleString()}`);
         }
         if (slPrice > 0) {
-          await placeTrigger(p, ctx(), {
+          await placeTrigger(p, tradeCtx, {
             triggerId: new BN(id + 1),
             triggerPrice: new BN(Math.round(slPrice * frac * 1e6)),
             direction: wantLong ? "below" : "above",
             limitPriceInTicks: new BN(
-              usdToTicks((wantLong ? slPrice * 0.97 : slPrice * 1.03) * frac, tick)
+              usdToTicks(
+                (wantLong ? slPrice * 0.97 : slPrice * 1.03) * frac,
+                tick
+              )
             ),
             maxBaseLots: new BN(0),
           });
@@ -276,15 +265,60 @@ export function TradeForm({
         // Not settled yet, or a transient read — keep waiting.
       }
     }
-    onDone("Fill not settled yet — arm TP/SL from the Orders tab once the position opens", true);
+    onDone(
+      "Fill not settled yet — arm TP/SL from the Orders tab once the position opens",
+      true
+    );
+  };
+
+  /** Matching and settlement are separate on a dark book. The order send can
+   * succeed even when the risk kernel later consumes the fill as refused, so
+   * only call it open after the private portfolio actually changes. */
+  const confirmPositionChange = async (
+    program: unknown,
+    submissionId: number,
+    beforeLots: bigint
+  ) => {
+    if (!owner) return;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      const portfolio = await (program as PortfolioReader).account.portfolio
+        .fetch(anqa.acc.portfolioOf(owner))
+        .catch(() => null);
+      if (!portfolio) continue;
+      const leg = readKernel(portfolio.inner).positions.find(
+        (position) => position.assetIndex === (anqa.market?.assetIndex ?? 0)
+      );
+      const afterLots = leg
+        ? leg.isLong
+          ? leg.lots
+          : -leg.lots
+        : 0n;
+      if (afterLots !== beforeLots) {
+        onSubmissionResolved(submissionId);
+        onDone(`${anqa.marketInfo.symbol} position open`);
+        anqa.refresh();
+        return;
+      }
+    }
+    onSubmissionResolved(submissionId);
+    onDone(
+      `${anqa.marketInfo.symbol} order did not settle — no position was opened`,
+      true
+    );
+    anqa.refresh();
   };
 
   const submit = async () => {
-    const p = anqa.programForTrading();
-    if (!p || !owner) return;
+    if (!owner) return;
     if (blocker) return onDone(blocker, true);
     // A market order still needs a bound; cross the band, not the universe.
-    const limit = type === "market" ? (side === "bid" ? effPrice * 1.02 : effPrice * 0.98) : Number(price);
+    const limit =
+      type === "market"
+        ? side === "bid"
+          ? effPrice * 1.02
+          : effPrice * 0.98
+        : Number(price);
     // May this order rest on the book? Only GTC and post-only limit orders.
     setBusy("Collateral");
     try {
@@ -292,50 +326,125 @@ export function TradeForm({
       // account, session and any top-up ride one signature. The collateral
       // itself is committed to the position by `place_order` below.
       const base = anqa.programFor("base");
-      const er = anqa.programFor("er");
-      if (!base || !MINT || !anqa.sessionKp) throw new Error("Wallet not ready");
-      await ensureWalletUsdc();
-      // The account funds the trade; the ticket never moves money on its own.
-      // It only makes sure the account exists, is in the rollup and has a
-      // session — and pulls in any deposit whose credit has not landed yet.
-      await fundMarket(base, er, ctx(), {
-        usd: Math.min(payUsd, allocated),
-        mint: MINT,
-        sessionKey: anqa.sessionKp.publicKey,
-        sessionPda: anqa.acc.sessionOf(owner),
-        need: { open: needOpen, delegate: needDelegate, grant: needGrant },
-        conn: anqa.conns.base,
-        onStep: (msg) => setBusy(msg),
-      });
+      const session = anqa.sessionProgram();
+      if (
+        !base ||
+        !MINT ||
+        !anqa.sessionKp ||
+        !session ||
+        !anqa.sessionTradeExtra
+      ) {
+        throw new Error("Wallet not ready");
+      }
+      // Established accounts go straight to the rollup. Base-layer balance
+      // and funding reads belong to Deposit, not in front of every trade.
+      if (needOpen || needDelegate || needGrant) {
+        await fundMarket(
+          base,
+          anqa.programFor("er"),
+          {
+            acc: anqa.acc,
+            marketId: anqa.marketId,
+            owner,
+            engine: owner,
+          },
+          {
+            usd: payUsd,
+            mint: MINT,
+            sessionKey: anqa.sessionKp.publicKey,
+            sessionPda: anqa.acc.sessionOf(owner),
+            need: { open: needOpen, delegate: needDelegate, grant: needGrant },
+            conn: anqa.conns.base,
+            onStep: (msg) => setBusy(msg),
+          }
+        );
+      }
+
+      // The grant is written on base and clone-read by the rollup. On a first
+      // trade, wait only for that one account to become visible before sending
+      // with the new key. This avoids capturing the wallet provider that was
+      // active before onboarding and then producing a second popup.
+      if (needGrant) {
+        setBusy("Arming 1-click");
+        const visible = await waitForSessionGrant(
+          session,
+          anqa.acc.sessionOf(owner),
+          anqa.sessionKp.publicKey
+        );
+        if (!visible)
+          throw new Error("Session is still syncing — try again in a moment");
+      }
+
       setBusy("Order");
-      await placeOrder(p, ctx(), {
-        side,
-        orderType:
-          type === "market" || tif === "ioc"
-            ? "immediateOrCancel"
-            : tif === "fok"
+      const existingLeg = anqa.portfolio
+        ? readKernel(anqa.portfolio.inner).positions.find(
+            (position) =>
+              position.assetIndex === (anqa.market?.assetIndex ?? 0)
+          )
+        : null;
+      const beforeLots = existingLeg
+        ? existingLeg.isLong
+          ? existingLeg.lots
+          : -existingLeg.lots
+        : 0n;
+      const submissionId = Date.now();
+      const clientOrderId = new BN(submissionId % 2_000_000_000);
+      await placeOrder(
+        session,
+        {
+          acc: anqa.acc,
+          marketId: anqa.marketId,
+          owner,
+          engine: owner,
+          ...anqa.sessionTradeExtra,
+        },
+        {
+          side,
+          orderType:
+            type === "market" || tif === "ioc"
+              ? "immediateOrCancel"
+              : tif === "fok"
               ? "fillOrKill"
               : tif === "postOnly"
-                ? "postOnly"
-                : "limit",
-        priceInTicks: new BN(usdToTicks(limit * frac, tick)),
-        baseLots: new BN(lots),
-        clientOrderId: new BN(Date.now() % 2_000_000_000),
-        // Isolated margin: what this position may lose, recorded on-chain
-        // beside it and enforced by the isolated liquidator.
-        collateralAtoms: new BN(Math.round(payUsd * 1e6)),
-        // Only an order that rests can be hidden; there is nothing to withhold
-        // from the ladder when the whole order crosses on arrival.
-        hidden: hidden && canRest,
-        makers: [], // dark: name nobody
-      });
+              ? "postOnly"
+              : "limit",
+          priceInTicks: new BN(usdToTicks(limit * frac, tick)),
+          baseLots: new BN(lots),
+          clientOrderId,
+          // Isolated margin: what this position may lose, recorded on-chain
+          // beside it and enforced by the isolated liquidator.
+          collateralAtoms: new BN(Math.round(payUsd * 1e6)),
+          // Only an order that rests can be hidden; there is nothing to withhold
+          // from the ladder when the whole order crosses on arrival.
+          hidden: hidden && canRest,
+          makers: [], // dark: name nobody
+        }
+      );
+      if (!canRest) {
+        onSubmitted({
+          id: submissionId,
+          marketId: anqa.marketInfo.id,
+          symbol: anqa.marketInfo.symbol,
+          base: anqa.marketInfo.base,
+          side: long ? "long" : "short",
+          size: sizeBtc,
+          notionalUsd: notional,
+          collateralUsd: payUsd,
+          submittedAt: Date.now(),
+        });
+        void confirmPositionChange(session, submissionId, beforeLots);
+      }
       const wantStops = tpslOpen && (tpN > 0 || slN > 0);
       onDone(
         canRest
           ? "Order on the book — cancel from Resting orders until it matches"
           : anqa.market?.dark
-            ? `Order submitted — hidden${wantStops ? "; arming TP/SL after settlement" : ""}`
-            : `Order submitted${wantStops ? " — arming TP/SL after settlement" : ""}`
+          ? `Opening ${long ? "long" : "short"} — matching privately${
+              wantStops ? "; arming TP/SL after settlement" : ""
+            }`
+          : `Opening ${long ? "long" : "short"}${
+              wantStops ? " — arming TP/SL after settlement" : ""
+            }`
       );
       if (wantStops) void armStops(long, tpN, slN);
       setPay("");
@@ -352,17 +461,22 @@ export function TradeForm({
   const step = !anqa.wallet ? "connect" : "trade";
 
   return (
-    <section className="flex flex-col flex-1 h-full min-h-0 bg-ink border border-line-soft rounded-lg overflow-hidden">
+    <section className="flex flex-col shrink-0 bg-ink border border-line-soft rounded-lg overflow-hidden">
       <header className="flex items-center shrink-0 h-8 px-2 border-b border-line-soft">
-        <span className="text-[11px] uppercase tracking-[0.12em] text-dim px-1">Isolated</span>
+        <div className="flex items-center gap-2 px-1">
+          <span className="text-[11px] font-semibold text-bright">Trade</span>
+          <span className="text-[10px] text-dim">Isolated</span>
+        </div>
         <div className="ml-auto">
           {anqa.portfolioDelegated ? (
             <Badge tone="live">
               <span className="live-dot w-1.5 h-1.5 rounded-full bg-bid inline-block" />
-              {anqa.sessionActive ? "1-click" : "session"}
+              {oneClickReady ? "1-click ready" : "enable 1-click"}
             </Badge>
           ) : (
-            <Badge tone="neutral">{anqa.portfolio ? "on base" : "no account"}</Badge>
+            <Badge tone="neutral">
+              {anqa.portfolio ? "on base" : "no account"}
+            </Badge>
           )}
         </div>
       </header>
@@ -393,7 +507,7 @@ export function TradeForm({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-2.5 flex flex-col gap-2.5">
+      <div className="p-2.5 flex flex-col gap-2.5">
         {/* price + order type */}
         <div className="flex gap-1.5">
           <div className="flex-1 min-w-0 flex items-center gap-2 h-10 px-2.5 bg-void border border-line rounded-md focus-within:border-phoenix-soft transition-colors">
@@ -415,7 +529,9 @@ export function TradeForm({
                 key={t}
                 onClick={() => setType(t)}
                 className={`h-full px-2.5 text-[11px] font-medium capitalize rounded transition-colors ${
-                  type === t ? "bg-raised text-bright" : "text-dim hover:text-text"
+                  type === t
+                    ? "bg-raised text-bright"
+                    : "text-dim hover:text-text"
                 }`}
               >
                 {t}
@@ -429,12 +545,23 @@ export function TradeForm({
               onClick={() => setPrice(mark.toFixed(2))}
               className="text-[10px] text-dim hover:text-phoenix transition-colors"
             >
-              use mark {mark.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              use mark{" "}
+              {mark.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </button>
             {band && (
-              <span className={`tnum text-[10px] ml-auto ${outOfBand ? "text-ask" : "text-dim"}`}>
-                band {band.low.toLocaleString(undefined, { maximumFractionDigits: 0 })}–
-                {band.high.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              <span
+                className={`tnum text-[10px] ml-auto ${
+                  outOfBand ? "text-ask" : "text-dim"
+                }`}
+              >
+                band{" "}
+                {band.low.toLocaleString(undefined, {
+                  maximumFractionDigits: 0,
+                })}
+                –
+                {band.high.toLocaleString(undefined, {
+                  maximumFractionDigits: 0,
+                })}
               </span>
             )}
           </div>
@@ -448,10 +575,20 @@ export function TradeForm({
             </span>
             <span className="text-dim">
               {allocated > 0.01 && (
-                <>now <span className="tnum text-phoenix/80">${allocated.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>{" "}</>
+                <>
+                  now{" "}
+                  <span className="tnum text-phoenix/80">
+                    $
+                    {allocated.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>{" "}
+                </>
               )}
               <button
-                onClick={() => setPay(allocatable > 0 ? allocatable.toFixed(2) : "")}
+                onClick={() =>
+                  setPay(allocatable > 0 ? allocatable.toFixed(2) : "")
+                }
                 className="text-phoenix/80 hover:text-phoenix transition-colors"
               >
                 max
@@ -474,7 +611,13 @@ export function TradeForm({
             {([25, 50, 75, 100] as const).map((pct) => (
               <button
                 key={pct}
-                onClick={() => setPay(allocatable > 0 ? ((allocatable * pct) / 100).toFixed(2) : "")}
+                onClick={() =>
+                  setPay(
+                    allocatable > 0
+                      ? ((allocatable * pct) / 100).toFixed(2)
+                      : ""
+                  )
+                }
                 className="h-5 text-[10px] rounded border border-line text-dim hover:text-text hover:border-phoenix-soft transition-colors"
               >
                 {pct === 100 ? "Max" : `${pct}%`}
@@ -489,16 +632,26 @@ export function TradeForm({
             <span className={long ? "text-bid" : "text-ask"}>
               {long ? "Long" : "Short"}:{" "}
               <span className="tnum">
-                ${notional.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                $
+                {notional.toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}
               </span>
             </span>
             {target > 0 && notional < target && lots >= 1 && (
-              <span className="text-dim tnum">rounded from ${target.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span className="text-dim tnum">
+                rounded from $
+                {target.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-2">
             <span className="tnum w-full text-[16px] text-bright">
-              {sizeBtc ? sizeBtc.toLocaleString(undefined, { maximumFractionDigits: anqa.marketInfo.sizeDp }) : 0}
+              {sizeBtc
+                ? sizeBtc.toLocaleString(undefined, {
+                    maximumFractionDigits: anqa.marketInfo.sizeDp,
+                  })
+                : 0}
             </span>
             <span className="shrink-0 text-[11px] font-medium text-muted bg-raised border border-line rounded px-1.5 py-0.5">
               {anqa.marketInfo.base}
@@ -515,7 +668,8 @@ export function TradeForm({
                 value={lev}
                 onChange={(e) => {
                   const n = Number(e.target.value);
-                  if (Number.isFinite(n)) setLev(Math.min(MAX_LEV, Math.max(0, n)));
+                  if (Number.isFinite(n))
+                    setLev(Math.min(MAX_LEV, Math.max(0, n)));
                 }}
                 inputMode="decimal"
                 className="tnum w-8 bg-transparent text-right text-[11px] text-bright outline-none"
@@ -554,7 +708,8 @@ export function TradeForm({
           </div>
           {lev > 20 && (
             <p className="text-[10px] text-phoenix/80 leading-relaxed">
-              Above the venue&rsquo;s 20x initial margin — needs free collateral beyond your pay amount.
+              Above the venue&rsquo;s 20x initial margin — needs free collateral
+              beyond your pay amount.
             </p>
           )}
         </div>
@@ -566,7 +721,9 @@ export function TradeForm({
             className="flex items-center gap-1.5 text-[11px] text-muted hover:text-text transition-colors select-none"
           >
             <span
-              className={`inline-block text-[9px] transition-transform ${tpslOpen ? "rotate-90" : ""}`}
+              className={`inline-block text-[9px] transition-transform ${
+                tpslOpen ? "rotate-90" : ""
+              }`}
             >
               ▶
             </span>
@@ -579,55 +736,91 @@ export function TradeForm({
                   label="Take profit"
                   value={tp}
                   onChange={setTp}
-                  placeholder={effPrice ? (effPrice * (long ? 1.05 : 0.95)).toFixed(2) : "0.00"}
+                  placeholder={
+                    effPrice
+                      ? (effPrice * (long ? 1.05 : 0.95)).toFixed(2)
+                      : "0.00"
+                  }
                 />
                 <TriggerField
                   label="Stop loss"
                   value={sl}
                   onChange={setSl}
-                  placeholder={effPrice ? (effPrice * (long ? 0.95 : 1.05)).toFixed(2) : "0.00"}
+                  placeholder={
+                    effPrice
+                      ? (effPrice * (long ? 0.95 : 1.05)).toFixed(2)
+                      : "0.00"
+                  }
                 />
               </div>
               {lots >= 1 && (tpN > 0 || slN > 0) && (
                 <div className="flex justify-between text-[10px] tnum">
                   <span className={tpN > 0 ? "text-bid" : "text-dim"}>
                     {tpN > 0
-                      ? `est. +$${Math.abs((long ? tpN - effPrice : effPrice - tpN) * lots).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                      ? `est. +$${Math.abs(
+                          (long ? tpN - effPrice : effPrice - tpN) * lots
+                        ).toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })}`
                       : ""}
                   </span>
                   <span className={slN > 0 ? "text-ask" : "text-dim"}>
                     {slN > 0
-                      ? `est. −$${Math.abs((long ? effPrice - slN : slN - effPrice) * lots).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                      ? `est. −$${Math.abs(
+                          (long ? effPrice - slN : slN - effPrice) * lots
+                        ).toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })}`
                       : ""}
                   </span>
                 </div>
               )}
               <p className="text-[10px] text-dim leading-relaxed">
-                Reduce-only. Armed automatically once the fill settles into a position.
+                Reduce-only. Armed automatically once the fill settles into a
+                position.
               </p>
             </div>
           )}
         </div>
 
         <div className="flex flex-col gap-1 py-1.5 border-y border-line-soft">
-          <Line label="Position value" value={notional ? `$${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"} />
+          <Line
+            label="Position value"
+            value={
+              notional
+                ? `$${notional.toLocaleString(undefined, {
+                    maximumFractionDigits: 0,
+                  })}`
+                : "—"
+            }
+          />
           <Line
             label="Your risk"
-            value={payUsd > 0 ? `$${payUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}
+            value={
+              payUsd > 0
+                ? `$${payUsd.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}`
+                : "—"
+            }
           />
           <Line
             label="Liq. price (est.)"
             value={
               liqPreview === null
                 ? "—"
-                : liqPreview.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                : liqPreview.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })
             }
           />
         </div>
 
         {type === "limit" && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-[0.08em] text-dim">Time in force</span>
+            <span className="text-[10px] uppercase tracking-[0.08em] text-dim">
+              Time in force
+            </span>
             <div className="flex items-center p-0.5 bg-void border border-line rounded-md">
               {(
                 [
@@ -644,13 +837,15 @@ export function TradeForm({
                     v === "gtc"
                       ? "Good till cancelled — rests until filled or cancelled"
                       : v === "postOnly"
-                        ? "Post only — never takes; rejected instead of crossing"
-                        : v === "ioc"
-                          ? "Immediate or cancel — takes what's there, discards the rest"
-                          : "Fill or kill — entire size fills now or nothing happens"
+                      ? "Post only — never takes; rejected instead of crossing"
+                      : v === "ioc"
+                      ? "Immediate or cancel — takes what's there, discards the rest"
+                      : "Fill or kill — entire size fills now or nothing happens"
                   }
                   className={`h-6 px-2 text-[10px] font-medium rounded transition-colors ${
-                    tif === v ? "bg-raised text-bright" : "text-dim hover:text-text"
+                    tif === v
+                      ? "bg-raised text-bright"
+                      : "text-dim hover:text-text"
                   }`}
                 >
                   {label}
@@ -661,10 +856,10 @@ export function TradeForm({
               {tif === "gtc"
                 ? "rests until filled"
                 : tif === "postOnly"
-                  ? "maker only, never takes"
-                  : tif === "ioc"
-                    ? "fills now, rest discarded"
-                    : "all or nothing, now"}
+                ? "maker only, never takes"
+                : tif === "ioc"
+                ? "fills now, rest discarded"
+                : "all or nothing, now"}
             </span>
           </div>
         )}
@@ -675,7 +870,9 @@ export function TradeForm({
             disabled, and says why. */}
         {anqa.market?.dark && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-[0.08em] text-dim">Visibility</span>
+            <span className="text-[10px] uppercase tracking-[0.08em] text-dim">
+              Visibility
+            </span>
             <div className="flex items-center p-0.5 bg-void border border-line rounded-md">
               {(
                 [
@@ -705,7 +902,9 @@ export function TradeForm({
                       : "Shown — counted in the public depth at your price"
                   }
                   className={`h-6 px-2 text-[10px] font-medium rounded transition-colors ${
-                    hidden === v && canRest ? "bg-raised text-bright" : "text-dim hover:text-text"
+                    hidden === v && canRest
+                      ? "bg-raised text-bright"
+                      : "text-dim hover:text-text"
                   }`}
                 >
                   {label}
@@ -716,8 +915,8 @@ export function TradeForm({
               {!canRest
                 ? "market fills on arrival — tap Hidden to rest instead"
                 : hidden
-                  ? "off the ladder until it fills"
-                  : "adds to public depth"}
+                ? "off the ladder until it fills"
+                : "adds to public depth"}
             </span>
           </div>
         )}
@@ -730,36 +929,60 @@ export function TradeForm({
             <>
               {needsDeposit ? (
                 <p className="text-[10px] text-dim leading-relaxed">
-                  Your account holds ${allocatable.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  {" "}— deposit to trade this size.
+                  Your account holds $
+                  {allocatable.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  — deposit to trade this size.
                 </p>
               ) : (
-                blocker && payUsd > 0 && (
-                  <p className="text-[10px] text-ask leading-relaxed">{blocker}</p>
+                blocker &&
+                payUsd > 0 && (
+                  <p className="text-[10px] text-ask leading-relaxed">
+                    {blocker}
+                  </p>
                 )
               )}
               {needsDeposit ? (
-                <button className="cta cta-primary" onClick={onDeposit} disabled={!!busy}>
+                <button
+                  className="cta cta-primary"
+                  onClick={onDeposit}
+                  disabled={!!busy}
+                >
                   Deposit USDC to account
                 </button>
               ) : (
-              <button
-                className={`cta ${long ? "cta-long" : "cta-short"} flex flex-col items-center justify-center leading-tight`}
-                disabled={!!busy || !!blocker || !anqa.sessionKp || !MINT}
-                onClick={submit}
-              >
-                <span>
-                  {busy
-                    ? `${busy}…`
-                    : `${long ? "Long" : "Short"}${lots >= 1 ? ` ${sizeBtc.toLocaleString(undefined, { maximumFractionDigits: anqa.marketInfo.sizeDp })} ${anqa.marketInfo.base}` : ""}`}
-                </span>
-                {!busy && lots >= 1 && (
-                  <span className="text-[10px] font-medium opacity-75">
-                    ${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })} at {lev}x · risking $
-                    {payUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                <button
+                  className={`cta ${
+                    long ? "cta-long" : "cta-short"
+                  } flex flex-col items-center justify-center leading-tight`}
+                  disabled={!!busy || !!blocker || !anqa.sessionKp || !MINT}
+                  onClick={submit}
+                >
+                  <span>
+                    {busy
+                      ? `${busy}…`
+                      : `Open ${long ? "long" : "short"}${
+                          lots >= 1
+                            ? ` · ${sizeBtc.toLocaleString(undefined, {
+                                maximumFractionDigits: anqa.marketInfo.sizeDp,
+                              })} ${anqa.marketInfo.base}`
+                            : ""
+                        }`}
                   </span>
-                )}
-              </button>
+                  {!busy && lots >= 1 && (
+                    <span className="text-[10px] font-medium opacity-75">
+                      $
+                      {notional.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}{" "}
+                      at {lev}x · risking $
+                      {payUsd.toLocaleString(undefined, {
+                        maximumFractionDigits: 0,
+                      })}
+                    </span>
+                  )}
+                </button>
               )}
             </>
           )}
@@ -770,8 +993,8 @@ export function TradeForm({
               (needOpen
                 ? "Isolated margin: the collateral you enter is this position's entire risk — it can never reach another market or your wallet. One signature opens this market; every order after is instant."
                 : anqa.market?.dark
-                  ? "Your order names no counterparty. The engine settles the fill; only the price prints."
-                  : "Crosses the book directly.")}
+                ? "Your order names no counterparty. The engine settles the fill; only the price prints."
+                : "Crosses the book directly.")}
           </p>
         </div>
       </div>
@@ -792,7 +1015,9 @@ function TriggerField({
 }) {
   return (
     <div className="flex flex-col gap-0.5 px-2 py-1.5 bg-void border border-line rounded-md focus-within:border-phoenix-soft transition-colors">
-      <span className="text-[9px] uppercase tracking-[0.08em] text-dim">{label}</span>
+      <span className="text-[9px] uppercase tracking-[0.08em] text-dim">
+        {label}
+      </span>
       <div className="flex items-center gap-1">
         <input
           value={value}

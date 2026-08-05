@@ -45,7 +45,7 @@ const MAINT_FRAC = 0.025;
  * entry per asset, so each row's margin is the amount that position can
  * actually lose and its liquidation price follows from that alone.
  */
-export function useAllPositions(pollMs = 2000): CrossPosition[] {
+export function useAllPositions(pollMs = 500): CrossPosition[] {
   const wallet = useAnchorWallet();
   const [rows, setRows] = useState<CrossPosition[]>([]);
   const busy = useRef(false);

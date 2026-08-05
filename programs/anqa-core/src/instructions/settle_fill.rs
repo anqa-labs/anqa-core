@@ -119,12 +119,29 @@ pub fn handler(ctx: Context<SettleFill>) -> Result<()> {
     if accepted {
         let mut group = ctx.accounts.risk_group.load_mut()?;
         let n_assets = group.asset_count();
+        // The kernel's own "now" — the same clock the refreshes below judge
+        // staleness by, frozen for the duration of this transaction.
+        let now_slot = group.header().current_slot.get();
         let mut slots = ctx.accounts.asset_slots.load_mut()?;
         let mut taker = ctx.accounts.taker_portfolio.load_mut()?;
         let mut maker = ctx.accounts.maker_portfolio.load_mut()?;
 
         let mut view =
             MarketGroupV16ViewMut::new(group.header_mut(), &mut slots.markets_mut()[..n_assets]);
+
+        // Sweep every lapsed backing bucket FIRST, inside this transaction.
+        //
+        // Settlement refreshes both whole accounts, and a refresh that must
+        // crystallize a loss refuses (`Stale`/`LockActive`) if any domain the
+        // account touches holds a Fresh-but-lapsed bucket. Sweeping from the
+        // keeper is a separate transaction and loses a race the crank re-arms
+        // every couple of seconds — the whole 2026-08-05 outage. Done here,
+        // against the same header clock the refreshes use, the race cannot
+        // exist. Sweeping a current bucket refuses harmlessly and is skipped
+        // by the pre-check; lapsed ones cost a few thousand CU each.
+        for domain in 0..n_assets * 2 {
+            let _ = view.expire_source_backing_bucket_not_atomic(domain, now_slot);
+        }
 
         // Settlement happens *after* matching, so both sides may have accrued
         // funding or losses since the book paired them, and both carry health

@@ -31,7 +31,7 @@ export type CrossOrder = {
  * to remember what they left resting. One batched rollup read covers all
  * books; each is walked in priority order and filtered to this wallet.
  */
-export function useAllOrders(pollMs = 2000): CrossOrder[] {
+export function useAllOrders(pollMs = 500): CrossOrder[] {
   const wallet = useAnchorWallet();
   const [rows, setRows] = useState<CrossOrder[]>([]);
   const busy = useRef(false);

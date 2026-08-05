@@ -11,6 +11,12 @@ vendor/percolator/target
 
 # Demo venue keys and mints (devnet play money)
 app/.demo-*.json
+app/.diag-*.json
+
+# Local maker state and provisioning output
+app/.maker-funded-*
+app/.prov*.log
+app/.provision*.log
 
 # Keeper and feed-pusher logs from the local demo venue
 app/.keeper-*.log

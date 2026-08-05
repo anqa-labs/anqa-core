@@ -6,27 +6,27 @@ import { PublicKey } from "@solana/web3.js";
 import { Button } from "./ui";
 import { readableError } from "@/lib/anqa";
 import {
-  authorizeWithdraw,
   cancelAll,
   cancelOrder,
   cancelTrigger,
-  claimDeposit,
   closePosition,
+  grantSessionOnly,
   placeTrigger,
-  realizePnl,
-  requestWithdraw,
-  settleWithdraw,
-  setupMarket,
-  undelegatePortfolio,
 } from "@/lib/actions";
-import { anqaAccounts, lotFraction, ticksToUsd, usd, usdToTicks } from "@/lib/anqa";
-import { closeAndSweep, collateralOf, defundMarket, fundMarket, walletUsdc } from "@/lib/margin";
+import { anqaAccounts, lotFraction, ticksToUsd, usdToTicks } from "@/lib/anqa";
+import { walletUsdc } from "@/lib/margin";
 import { MARKETS } from "@/lib/markets";
 import { equity, readKernel, PF_INNER } from "@/lib/portfolio";
 import { useAllOrders, type CrossOrder } from "@/lib/useAllOrders";
 import { useAllPositions, type CrossPosition } from "@/lib/useAllPositions";
 import { useTickFlash, useTweened } from "@/lib/useLive";
 import { usePythLive } from "@/lib/usePyth";
+import {
+  SESSION_DURATION_SECS,
+  sessionGrantIsFresh,
+  waitForSessionGrant,
+} from "@/lib/session";
+import type { TradeSubmission } from "@/lib/tradeActivity";
 import type { Anqa } from "@/lib/useAnqa";
 
 // Each market has its own collateral mint; resolved from the registry.
@@ -39,12 +39,14 @@ export function BottomTabs({
   onDone,
   onSelectMarket,
   onDeposit,
+  submissions,
 }: {
   anqa: Anqa;
   onDone: (msg: string, err?: boolean) => void;
   onSelectMarket: (id: number) => void;
   /** Opens the deposit/withdraw dialog — the one place money moves. */
   onDeposit: () => void;
+  submissions: TradeSubmission[];
 }) {
   const [tab, setTab] = useState<Tab>("positions");
   const [busy, setBusy] = useState<string | null>(null);
@@ -72,43 +74,20 @@ export function BottomTabs({
     return base + (position.isLong ? delta : -delta);
   })();
 
-
-  const run = async (label: string, layer: "base" | "er", fn: (p: any, c: any) => Promise<any>) => {
+  const run = async (
+    label: string,
+    layer: "base" | "er",
+    fn: (p: any, c: any) => Promise<any>
+  ) => {
     const p = anqa.programFor(layer);
     if (!p || !owner) return;
     setBusy(label);
     try {
-      await fn(p, { acc: anqa.acc, marketId: anqa.marketId, owner, engine: owner });
-      onDone(`${label} done`);
-      anqa.refresh();
-    } catch (e: any) {
-      onDone(readableError(e), true);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  /** Trading actions: signed by the session key when armed — no popups.
-   *  The global session means any market's action works from anywhere, so a
-   *  row can pass its own market and never force a navigation first. */
-  const runTrade = async (
-    label: string,
-    fn: (p: any, c: any) => Promise<any>,
-    forMarket?: { id: number; groupId: number }
-  ) => {
-    const p = anqa.programForTrading();
-    if (!p || !owner) return;
-    const acc = forMarket
-      ? anqaAccounts(new BN(forMarket.id), new BN(forMarket.groupId))
-      : anqa.acc;
-    setBusy(label);
-    try {
       await fn(p, {
-        acc,
-        marketId: forMarket ? new BN(forMarket.id) : anqa.marketId,
+        acc: anqa.acc,
+        marketId: anqa.marketId,
         owner,
         engine: owner,
-        ...anqa.tradeExtra,
       });
       onDone(`${label} done`);
       anqa.refresh();
@@ -119,40 +98,116 @@ export function BottomTabs({
     }
   };
 
-  /**
-   * Close a position and bring its collateral home.
-   *
-   * Leaving the money in the market's account would make it the next
-   * position's margin — the one thing isolated margin must never do — so
-   * the sweep is part of closing, not a chore left to the trader.
-   */
-  const closeAndReturn = async (row: CrossPosition) => {
-    const trading = anqa.programForTrading();
-    const base = anqa.programFor("base");
-    const er = anqa.programFor("er");
-    const MINT = row.market.mint ? new PublicKey(row.market.mint) : null;
-    if (!trading || !base || !er || !owner || !MINT) return;
-    const acc = anqaAccounts(new BN(row.market.id), new BN(row.market.groupId));
-    const worstAsset = row.isLong ? (row.mark ?? 0) * 0.96 : (row.mark ?? 0) * 1.04;
-    const worstLot = worstAsset * row.market.lotFrac;
-    setBusy("Close");
-    try {
-      await closeAndSweep(
-        trading,
+  /** Return a session-signed client, renewing once when it has expired. The
+   *  wallet is never used as a silent fallback for the actual trade. */
+  const requireTradingSession = async () => {
+    if (!owner || !anqa.sessionKp || !anqa.sessionTradeExtra) {
+      throw new Error("Connect a wallet to trade");
+    }
+    const session = anqa.sessionProgram();
+    if (!session) throw new Error("Session key unavailable");
+
+    const sessionPda = anqa.acc.sessionOf(owner);
+    if (
+      !anqa.sessionActive &&
+      !sessionGrantIsFresh(sessionPda, anqa.sessionKp.publicKey)
+    ) {
+      const base = anqa.programFor("base");
+      if (!base) throw new Error("Wallet not ready");
+      setBusy("Enabling 1-click");
+      await grantSessionOnly(
         base,
-        er,
-        { acc, marketId: new BN(row.market.id), owner, engine: owner, ...anqa.tradeExtra },
-        {
-          worstPriceInTicks: new BN(usdToTicks(worstLot, row.market.tick)),
-          mint: MINT,
-          conn: anqa.conns.base,
-          assetIndex: row.market.assetIndex,
-          onStep: (msg: string) => setBusy(msg),
-        }
+        { acc: anqa.acc, marketId: anqa.marketId, owner, engine: owner },
+        anqa.sessionKp.publicKey,
+        new BN(SESSION_DURATION_SECS)
       );
-      onDone(`${row.market.symbol} closed — collateral returned to your wallet`);
+
+      const visible = await waitForSessionGrant(
+        session,
+        sessionPda,
+        anqa.sessionKp.publicKey
+      );
+      if (!visible)
+        throw new Error("Session is still syncing — try again in a moment");
+    }
+
+    return { program: session, extra: anqa.sessionTradeExtra };
+  };
+
+  /** Trading actions: signed by the session key when armed — no popups.
+   *  The global session means any market's action works from anywhere, so a
+   *  row can pass its own market and never force a navigation first. */
+  const runTrade = async (
+    label: string,
+    fn: (p: any, c: any) => Promise<any>,
+    forMarket?: { id: number; groupId: number }
+  ) => {
+    if (!owner) return;
+    const acc = forMarket
+      ? anqaAccounts(new BN(forMarket.id), new BN(forMarket.groupId))
+      : anqa.acc;
+    setBusy(label);
+    try {
+      const { program, extra } = await requireTradingSession();
+      await fn(program, {
+        acc,
+        marketId: forMarket ? new BN(forMarket.id) : anqa.marketId,
+        owner,
+        engine: owner,
+        ...extra,
+      });
+      onDone(`${label} done`);
       anqa.refresh();
     } catch (e: any) {
+      onDone(readableError(e), true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const [closing, setClosing] = useState<Set<number>>(new Set());
+
+  /** Close is one reduce-only rollup send. Released collateral stays in the
+   *  trading account; withdrawal remains an explicit wallet action. */
+  const closeAndReturn = async (row: CrossPosition) => {
+    if (!owner) return;
+    const acc = anqaAccounts(new BN(row.market.id), new BN(row.market.groupId));
+    const worstAsset = row.isLong
+      ? (row.mark ?? 0) * 0.96
+      : (row.mark ?? 0) * 1.04;
+    const worstLot = worstAsset * row.market.lotFrac;
+    setBusy(`Closing ${row.market.symbol}`);
+    setClosing((current) => new Set(current).add(row.market.id));
+    try {
+      const { program, extra } = await requireTradingSession();
+      await closePosition(
+        program,
+        {
+          acc,
+          marketId: new BN(row.market.id),
+          owner,
+          engine: owner,
+          ...extra,
+        },
+        new BN(usdToTicks(worstLot, row.market.tick)),
+        new BN(0),
+        []
+      );
+      onDone(`${row.market.symbol} close sent — settling privately`);
+      anqa.refresh();
+      window.setTimeout(() => {
+        setClosing((current) => {
+          const next = new Set(current);
+          next.delete(row.market.id);
+          return next;
+        });
+      }, 30_000);
+    } catch (e: any) {
+      setClosing((current) => {
+        const next = new Set(current);
+        next.delete(row.market.id);
+        return next;
+      });
       onDone(readableError(e), true);
     } finally {
       setBusy(null);
@@ -172,6 +227,9 @@ export function BottomTabs({
   // Position already there: it's a working order managing it, shown under
   // "Orders" beside that market's TP/SL.
   const positioned = new Set(allPositions.map((r) => r.market.id));
+  const pendingPositions = submissions.filter(
+    (trade) => !positioned.has(trade.marketId)
+  );
   const workingOrders = allOrders.filter((o) => positioned.has(o.market.id));
   const restingOrders = allOrders.filter((o) => !positioned.has(o.market.id));
 
@@ -185,7 +243,9 @@ export function BottomTabs({
   // Settlement can lag the match by a few seconds, so remember the pending
   // market and fire when the position lands.
   const prevResting = useRef<Map<string, CrossOrder> | null>(null);
-  const pendingMatch = useRef<Map<number, { symbol: string; at: number }>>(new Map());
+  const pendingMatch = useRef<Map<number, { symbol: string; at: number }>>(
+    new Map()
+  );
   useEffect(() => {
     const now = new Map(
       restingOrders.map((o) => [
@@ -198,7 +258,10 @@ export function BottomTabs({
     if (!before) return;
     for (const [key, o] of before) {
       if (now.has(key) || leaving.has(key)) continue;
-      pendingMatch.current.set(o.market.id, { symbol: o.market.symbol, at: Date.now() });
+      pendingMatch.current.set(o.market.id, {
+        symbol: o.market.symbol,
+        at: Date.now(),
+      });
     }
     for (const [mid, p] of pendingMatch.current) {
       if (Date.now() - p.at > 30_000) pendingMatch.current.delete(mid);
@@ -211,7 +274,8 @@ export function BottomTabs({
   }, [restingOrders, allPositions]);
 
   const counts: Record<Tab, number | null> = {
-    positions: allPositions.length || (position ? 1 : 0),
+    positions:
+      allPositions.length + pendingPositions.length || (position ? 1 : 0),
     orders: workingOrders.length + anqa.triggers.length,
     resting: restingOrders.length,
     account: null,
@@ -231,7 +295,9 @@ export function BottomTabs({
             key={t}
             onClick={() => setTab(t)}
             className={`h-full px-3 text-[12px] font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
-              tab === t ? "border-phoenix text-bright" : "border-transparent text-dim hover:text-text"
+              tab === t
+                ? "border-phoenix text-bright"
+                : "border-transparent text-dim hover:text-text"
             }`}
           >
             {labels[t]}
@@ -262,70 +328,103 @@ export function BottomTabs({
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div key={tab} className="tab-swap h-full">
-        {!anqa.wallet ? (
-          <Empty>Connect a wallet.</Empty>
-        ) : tab === "positions" ? (
-          anqa.loading && allPositions.length === 0 ? (
-            <SkeletonRows />
-          ) : allPositions.length === 0 ? (
-            <Empty>No open positions on any market.</Empty>
-          ) : (
-            <>
-              <Head cols={["Market", "Side", "Size", "Entry", "Unrealised", "Liq. price", "Margin", ""]} n={8} />
-              {allPositions.map((row) => (
-                <PositionRow
-                  key={row.market.id}
-                  row={row}
-                  busy={busy}
-                  onGoto={() => onSelectMarket(row.market.id)}
-                  onClose={() => closeAndReturn(row)}
+          {!anqa.wallet ? (
+            <Empty>Connect a wallet.</Empty>
+          ) : tab === "positions" ? (
+            anqa.loading &&
+            allPositions.length === 0 &&
+            pendingPositions.length === 0 ? (
+              <SkeletonRows />
+            ) : allPositions.length === 0 && pendingPositions.length === 0 ? (
+              <Empty>No open positions on any market.</Empty>
+            ) : (
+              <>
+                <Head
+                  cols={[
+                    "Market",
+                    "Side",
+                    "Size",
+                    "Entry",
+                    "Unrealised",
+                    "Liq. price",
+                    "Margin",
+                    "",
+                  ]}
+                  n={8}
                 />
-              ))}
-            </>
-          )
-        ) : tab === "orders" ? (
-          <OrdersTab
-            anqa={anqa}
-            position={position}
-            busy={busy}
-            run={runTrade}
-            onDone={onDone}
-            working={workingOrders}
-            onSelectMarket={onSelectMarket}
-          />
-        ) : tab === "resting" ? (
-          restingOrders.length === 0 ? (
-            <Empty>
-              Nothing resting — an order that opens a position waits here until it matches.
-            </Empty>
-          ) : (
-            <>
-              <Head cols={["Market", "Side", "Price", "Size", "Visibility", ""]} />
-              {restingOrders.map((o) => {
-                const key = `${o.market.id}-${o.side}-${o.clientOrderId.toString()}`;
-                return (
-                  <OrderRow
-                    key={key}
-                    row={o}
-                    busy={busy}
-                    leaving={leaving.has(key)}
-                    onGoto={() => onSelectMarket(o.market.id)}
-                    onCancel={() => {
-                      markLeaving(key);
-                      runTrade(
-                        "Cancel",
-                        (p, c) => cancelOrder(p, c, o.side, o.clientOrderId),
-                        o.market
-                      );
-                    }}
+                {pendingPositions.map((trade) => (
+                  <PendingPositionRow
+                    key={trade.id}
+                    trade={trade}
+                    onGoto={() => onSelectMarket(trade.marketId)}
                   />
-                );
-              })}
-            </>
-          )
-        ) : (
-          <AccountTab anqa={anqa} busy={busy} onDone={onDone} positions={allPositions} onDeposit={onDeposit} />
-        )}
+                ))}
+                {allPositions.map((row) => (
+                  <PositionRow
+                    key={row.market.id}
+                    row={row}
+                    busy={busy}
+                    closing={closing.has(row.market.id)}
+                    onGoto={() => onSelectMarket(row.market.id)}
+                    onClose={() => closeAndReturn(row)}
+                  />
+                ))}
+              </>
+            )
+          ) : tab === "orders" ? (
+            <OrdersTab
+              anqa={anqa}
+              position={position}
+              busy={busy}
+              run={runTrade}
+              onDone={onDone}
+              working={workingOrders}
+              onSelectMarket={onSelectMarket}
+            />
+          ) : tab === "resting" ? (
+            restingOrders.length === 0 ? (
+              <Empty>
+                Nothing resting — an order that opens a position waits here
+                until it matches.
+              </Empty>
+            ) : (
+              <>
+                <Head
+                  cols={["Market", "Side", "Price", "Size", "Visibility", ""]}
+                />
+                {restingOrders.map((o) => {
+                  const key = `${o.market.id}-${
+                    o.side
+                  }-${o.clientOrderId.toString()}`;
+                  return (
+                    <OrderRow
+                      key={key}
+                      row={o}
+                      busy={busy}
+                      leaving={leaving.has(key)}
+                      onGoto={() => onSelectMarket(o.market.id)}
+                      onCancel={() => {
+                        markLeaving(key);
+                        runTrade(
+                          "Cancel",
+                          (p, c) => cancelOrder(p, c, o.side, o.clientOrderId),
+                          o.market
+                        );
+                      }}
+                    />
+                  );
+                })}
+              </>
+            )
+          ) : (
+            <AccountTab
+              anqa={anqa}
+              busy={busy}
+              onDone={onDone}
+              positions={allPositions}
+              onDeposit={onDeposit}
+            />
+          )}
         </div>
       </div>
     </section>
@@ -351,7 +450,15 @@ function SkeletonRows() {
 
 /** Working orders on top of existing positions: limit orders beside the
  *  TP/SL protecting the same market. Opening orders live in Resting. */
-function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket }: any) {
+function OrdersTab({
+  anqa,
+  position,
+  busy,
+  run,
+  onDone,
+  working,
+  onSelectMarket,
+}: any) {
   const [stop, setStop] = useState("");
   const tick = anqa.market?.tickSize ?? 1;
   const frac = lotFraction(anqa.market);
@@ -365,7 +472,11 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
           <input
             value={stop}
             onChange={(e) => setStop(e.target.value)}
-            placeholder={mark ? (mark * (position.isLong ? 0.97 : 1.03)).toFixed(2) : "0.00"}
+            placeholder={
+              mark
+                ? (mark * (position.isLong ? 0.97 : 1.03)).toFixed(2)
+                : "0.00"
+            }
             inputMode="decimal"
             className="tnum w-32 h-7 bg-void border border-line rounded px-2 text-[11px] text-bright outline-none focus:border-phoenix-soft placeholder:text-dim/60"
           />
@@ -381,7 +492,10 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                   triggerPrice: new BN(Math.round(p * frac * 1e6)),
                   direction: position.isLong ? "below" : "above",
                   limitPriceInTicks: new BN(
-                    usdToTicks((position.isLong ? p * 0.97 : p * 1.03) * frac, tick)
+                    usdToTicks(
+                      (position.isLong ? p * 0.97 : p * 1.03) * frac,
+                      tick
+                    )
                   ),
                   maxBaseLots: new BN(0),
                 })
@@ -420,10 +534,9 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                 Limit {o.side === "bid" ? "buy" : "sell"}
               </span>
               <span className="tnum text-text">
-                {(ticksToUsd(o.priceInTicks, o.market.tick) / o.market.lotFrac).toLocaleString(
-                  undefined,
-                  { minimumFractionDigits: 2 }
-                )}
+                {(
+                  ticksToUsd(o.priceInTicks, o.market.tick) / o.market.lotFrac
+                ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
               <span className="tnum text-muted">
                 {(o.baseLots * o.market.lotFrac).toLocaleString(undefined, {
@@ -437,13 +550,15 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                   and a hidden one does not. That is the distinction the
                   trader chose, so it is the one worth reporting. */}
               <span
-                className={`text-[10px] ${o.hidden ? "text-phoenix" : "text-dim"}`}
+                className={`text-[10px] ${
+                  o.hidden ? "text-phoenix" : "text-dim"
+                }`}
                 title={
                   o.hidden
                     ? "Off the public ladder — nobody sees this size until it fills"
                     : o.dark
-                      ? "Counted in the public depth at this price; the owner is still nobody's business"
-                      : "Publicly visible"
+                    ? "Counted in the public depth at this price; the owner is still nobody's business"
+                    : "Publicly visible"
                 }
               >
                 {o.hidden ? "hidden" : o.dark ? "on ladder" : "visible"}
@@ -452,7 +567,12 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                 <button
                   disabled={!!busy}
                   onClick={() =>
-                    run("Cancel", (p: any, c: any) => cancelOrder(p, c, o.side, o.clientOrderId), o.market)
+                    run(
+                      "Cancel",
+                      (p: any, c: any) =>
+                        cancelOrder(p, c, o.side, o.clientOrderId),
+                      o.market
+                    )
                   }
                   className="text-[10px] text-dim hover:text-ask transition-colors disabled:opacity-40"
                 >
@@ -465,7 +585,10 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
             const m = MARKETS.find((x) => x.assetIndex === t.assetIndex);
             if (!m) return null;
             return (
-              <div key={t.id} className="grid grid-cols-6 items-center px-3 py-2 text-[11px] row-hover row-in">
+              <div
+                key={t.id}
+                className="grid grid-cols-6 items-center px-3 py-2 text-[11px] row-hover row-in"
+              >
                 <button
                   onClick={() => onSelectMarket(m.id)}
                   className="text-left font-medium text-bright hover:text-phoenix transition-colors"
@@ -476,7 +599,11 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                   {t.direction === "below" ? "Stop loss" : "Take profit"}
                 </span>
                 <span className="tnum text-text">
-                  {(Number(t.price.toString()) / 1e6 / m.lotFrac).toLocaleString(undefined, {
+                  {(
+                    Number(t.price.toString()) /
+                    1e6 /
+                    m.lotFrac
+                  ).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
                   })}
@@ -484,14 +611,24 @@ function OrdersTab({ anqa, position, busy, run, onDone, working, onSelectMarket 
                 <span className="tnum text-muted">
                   {Number(t.maxLots.toString()) === 0
                     ? "full position"
-                    : `${(Number(t.maxLots.toString()) * m.lotFrac).toLocaleString(undefined, { maximumFractionDigits: m.sizeDp })} ${m.base}`}
+                    : `${(
+                        Number(t.maxLots.toString()) * m.lotFrac
+                      ).toLocaleString(undefined, {
+                        maximumFractionDigits: m.sizeDp,
+                      })} ${m.base}`}
                 </span>
-                <span className="text-muted text-[10px]">when mark goes {t.direction}</span>
+                <span className="text-muted text-[10px]">
+                  when mark goes {t.direction}
+                </span>
                 <span className="text-right">
                   <button
                     disabled={!!busy}
                     onClick={() =>
-                      run("Cancelled", (p: any, c: any) => cancelTrigger(p, c, new BN(t.id)), m)
+                      run(
+                        "Cancelled",
+                        (p: any, c: any) => cancelTrigger(p, c, new BN(t.id)),
+                        m
+                      )
                     }
                     className="text-[10px] text-dim hover:text-ask transition-colors disabled:opacity-40"
                   >
@@ -535,7 +672,9 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
   const owner = anqa.wallet?.publicKey;
   const [wallet, setWallet] = useState(0);
   const [account, setAccount] = useState(0);
-  const MINT = anqa.marketInfo.mint ? new PublicKey(anqa.marketInfo.mint) : null;
+  const MINT = anqa.marketInfo.mint
+    ? new PublicKey(anqa.marketInfo.mint)
+    : null;
 
   useEffect(() => {
     if (!owner || !MINT) return;
@@ -546,7 +685,9 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
         .getAccountInfo(anqa.acc.portfolioOf(owner))
         .catch(() => null);
       const a = info
-        ? Number(equity(readKernel(Uint8Array.from(info.data.subarray(PF_INNER))))) / 1e6
+        ? Number(
+            equity(readKernel(Uint8Array.from(info.data.subarray(PF_INNER))))
+          ) / 1e6
         : 0;
       if (!stop) {
         setWallet(w);
@@ -562,7 +703,10 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owner?.toBase58(), busy]);
 
-  const openPnl = (positions ?? []).reduce((a: number, r: CrossPosition) => a + (r.pnl ?? 0), 0);
+  const openPnl = (positions ?? []).reduce(
+    (a: number, r: CrossPosition) => a + (r.pnl ?? 0),
+    0
+  );
   // Collateral committed to open positions is spent from the balance the
   // moment a position opens — the account shows what is still free, the way
   // a debit works, not the total the trader owns.
@@ -572,7 +716,10 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
   );
   const free = Math.max(0, account - committed);
   const money = (n: number) =>
-    `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    `$${n.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
   if (!owner) return <Empty>Connect a wallet.</Empty>;
 
@@ -581,7 +728,9 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
       {/* the account */}
       <div className="border border-line-soft rounded-lg overflow-hidden">
         <div className="flex items-center h-11 px-4 border-b border-line-soft">
-          <span className="text-[13px] font-semibold text-bright">Trading account</span>
+          <span className="text-[13px] font-semibold text-bright">
+            Trading account
+          </span>
           <span className="ml-auto flex items-center gap-1.5 text-[10px] text-dim">
             <span className="grid place-items-center h-3.5 w-3.5 rounded-full border border-line text-[8px]">
               i
@@ -605,10 +754,16 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
             USDC
           </span>
           <span className="tnum text-bright">
-            {free.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {free.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </span>
           <span className="tnum text-muted">
-            {wallet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {wallet.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </span>
           <span className="flex items-center gap-2">
             <button
@@ -631,14 +786,19 @@ function AccountTab({ anqa, busy, onDone, positions, onDeposit }: any) {
 
       {/* portfolio */}
       <div className="flex flex-col gap-2">
-        <span className="text-[12px] font-semibold text-bright">Your portfolio</span>
+        <span className="text-[12px] font-semibold text-bright">
+          Your portfolio
+        </span>
         <div className="grid grid-cols-2 gap-2">
           <Stat label="Portfolio value" value={money(account + wallet)} />
           <Stat label="In positions" value={money(committed)} />
         </div>
         <Stat
           label="Open positions"
-          value={`${openPnl < 0 ? "−" : "+"}${money(Math.abs(openPnl)).replace("$", "$")}`}
+          value={`${openPnl < 0 ? "−" : "+"}${money(Math.abs(openPnl)).replace(
+            "$",
+            "$"
+          )}`}
           tone={openPnl > 0 ? "bid" : openPnl < 0 ? "ask" : "muted"}
         />
       </div>
@@ -661,7 +821,11 @@ function Stat({
       <span className="text-[9px] text-dim">{label}</span>
       <span
         className={`tnum text-[13px] font-semibold ${
-          tone === "bid" ? "text-bid" : tone === "ask" ? "text-ask" : "text-bright"
+          tone === "bid"
+            ? "text-bid"
+            : tone === "ask"
+            ? "text-ask"
+            : "text-bright"
         }`}
       >
         {value}
@@ -701,10 +865,9 @@ function OrderRow({
         {row.side === "bid" ? "Buy" : "Sell"}
       </span>
       <span className="tnum text-text">
-        {(ticksToUsd(row.priceInTicks, row.market.tick) / row.market.lotFrac).toLocaleString(
-          undefined,
-          { minimumFractionDigits: 2 }
-        )}
+        {(
+          ticksToUsd(row.priceInTicks, row.market.tick) / row.market.lotFrac
+        ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
       </span>
       <span className="tnum text-muted">
         {(row.baseLots * row.market.lotFrac).toLocaleString(undefined, {
@@ -712,7 +875,9 @@ function OrderRow({
         })}{" "}
         {row.market.base}
       </span>
-      <span className="text-phoenix/90 text-[10px]">{row.dark ? "hidden" : "visible"}</span>
+      <span className="text-phoenix/90 text-[10px]">
+        {row.dark ? "hidden" : "visible"}
+      </span>
       <span className="text-right">
         <button
           disabled={!!busy}
@@ -726,16 +891,65 @@ function OrderRow({
   );
 }
 
+/** Immediate feedback for a market order while the private matcher and
+ * settlement keeper turn it into the canonical on-chain position row. */
+function PendingPositionRow({
+  trade,
+  onGoto,
+}: {
+  trade: TradeSubmission;
+  onGoto: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-8 items-center px-3 py-2.5 text-[11px] bg-phoenix/[0.025] row-in">
+      <button
+        onClick={onGoto}
+        className="text-left font-medium text-bright hover:text-phoenix transition-colors"
+      >
+        {trade.symbol}
+      </button>
+      <span>
+        <span
+          className={`inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold ${
+            trade.side === "long" ? "bg-bid/12 text-bid" : "bg-ask/12 text-ask"
+          }`}
+        >
+          {trade.side === "long" ? "Long" : "Short"}
+        </span>
+      </span>
+      <span className="tnum text-text">
+        {trade.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
+        {trade.base}
+      </span>
+      <span className="text-phoenix flex items-center gap-1.5">
+        <span className="live-dot w-1.5 h-1.5 rounded-full bg-phoenix" />
+        Matching
+      </span>
+      <span className="text-dim">settling…</span>
+      <span className="text-dim">—</span>
+      <span className="tnum text-muted">
+        $
+        {trade.collateralUsd.toLocaleString(undefined, {
+          maximumFractionDigits: 2,
+        })}
+      </span>
+      <span className="text-right text-[10px] text-dim">Session signed</span>
+    </div>
+  );
+}
+
 /** One position, live: streams its market's index price for tick-by-tick
  *  PnL and closes directly — the global session signs for any market. */
 function PositionRow({
   row,
   busy,
+  closing,
   onClose,
   onGoto,
 }: {
   row: CrossPosition;
   busy: string | null;
+  closing: boolean;
   onClose: () => void;
   onGoto: () => void;
 }) {
@@ -752,7 +966,10 @@ function PositionRow({
   const tone = pnl > 0 ? "text-bid" : pnl < 0 ? "text-ask" : "text-muted";
   return (
     <div className="grid grid-cols-8 items-center px-3 py-2.5 text-[11px] row-hover glow-in">
-      <button onClick={onGoto} className="text-left font-medium text-bright hover:text-phoenix transition-colors">
+      <button
+        onClick={onGoto}
+        className="text-left font-medium text-bright hover:text-phoenix transition-colors"
+      >
         {row.market.symbol}
       </button>
       <span>
@@ -765,33 +982,50 @@ function PositionRow({
         </span>
       </span>
       <span className="tnum text-text">
-        {row.size.toLocaleString(undefined, { maximumFractionDigits: row.market.sizeDp })} {row.market.base}
+        {row.size.toLocaleString(undefined, {
+          maximumFractionDigits: row.market.sizeDp,
+        })}{" "}
+        {row.market.base}
       </span>
       <span className="tnum text-muted">
-        {row.entry === null ? "—" : row.entry.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        {row.entry === null
+          ? "—"
+          : row.entry.toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </span>
       <span className={`tnum ${tone}`}>
         {pnl < 0 ? "−" : "+"}$
-        {Math.abs(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {Math.abs(pnl).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}
         <span className="ml-1 text-[9px] opacity-80">
           ({roe >= 0 ? "+" : ""}
           {roe.toFixed(2)}%)
         </span>
       </span>
       {/* Estimated liquidation price; "—" when price alone cannot get there. */}
-      <span className="tnum text-ask/80" title="Estimated — moves with equity and your other positions">
-        {row.liq === null ? "—" : row.liq.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      <span
+        className="tnum text-ask/80"
+        title="Estimated — moves with equity and your other positions"
+      >
+        {row.liq === null
+          ? "—"
+          : row.liq.toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </span>
       <span className="tnum text-muted">
-        ${row.legMarginUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        $
+        {row.legMarginUsd.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}
       </span>
       <span className="text-right">
         <button
-          disabled={!!busy || row.mark === null}
+          disabled={!!busy || row.mark === null || closing}
           onClick={onClose}
           className="h-6 px-2.5 rounded border border-ask/40 text-[10px] font-medium text-ask hover:bg-ask/15 transition-colors disabled:opacity-40"
         >
-          {busy === "Close" ? "Closing…" : "Close"}
+          {closing ? "Closing…" : "Close"}
         </button>
       </span>
     </div>
@@ -814,31 +1048,58 @@ function Head({ cols, n = 6 }: { cols: string[]; n?: number }) {
 }
 
 /** A money figure that glides between values and flashes its direction. */
-function LiveFigure({ label, value, hint }: { label: string; value: number | null; hint?: string }) {
+function LiveFigure({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number | null;
+  hint?: string;
+}) {
   const shown = useTweened(value);
   const flash = useTickFlash(value);
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-[0.1em] text-dim">{label}</span>
+      <span className="text-[10px] uppercase tracking-[0.1em] text-dim">
+        {label}
+      </span>
       <span
         key={flash.key}
         className={`tnum text-[14px] text-bright px-0.5 -mx-0.5 ${
-          flash.dir === "up" ? "flash-up" : flash.dir === "down" ? "flash-down" : ""
+          flash.dir === "up"
+            ? "flash-up"
+            : flash.dir === "down"
+            ? "flash-down"
+            : ""
         }`}
       >
         {shown === null
           ? "—"
-          : `$${shown.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          : `$${shown.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`}
       </span>
       {hint && <span className="text-[9px] text-dim">{hint}</span>}
     </div>
   );
 }
 
-function Figure({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Figure({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-[0.1em] text-dim">{label}</span>
+      <span className="text-[10px] uppercase tracking-[0.1em] text-dim">
+        {label}
+      </span>
       <span className="tnum text-[14px] text-bright">{value}</span>
       {hint && <span className="text-[9px] text-dim">{hint}</span>}
     </div>

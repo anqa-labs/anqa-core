@@ -32,6 +32,7 @@ import { teeRpcFor } from "./tee-auth";
 import os from "os";
 import path from "path";
 import { resolveFeedAccount } from "./feed";
+import { explain } from "./errs";
 
 const PROGRAM_ID = new PublicKey("4F7QYiHQn51zCdE2XMVqiezamf4pGpLZzYVykqteBBNW");
 const BTC_FEED = new PublicKey(
@@ -161,7 +162,14 @@ async function main() {
 
   await step("portfolio", () => exists(portfolio), () =>
     pBase.methods.openPortfolio()
-      .accounts({ trader: maker.publicKey, market, portfolio, systemProgram: SystemProgram.programId })
+      // The HUB market, never this maker's own. `open_portfolio` stamps
+      // `portfolio.market_id` from whatever market it is handed, and every
+      // trading instruction then demands that tag equal the market's
+      // `group_id`. There is one portfolio per trader per hub, so whichever
+      // market happened to run this script first would otherwise brand the
+      // account with its own id and make it untradeable everywhere — which is
+      // exactly what the requote watchdog did when it seeded SUI first.
+      .accounts({ trader: maker.publicKey, market: gpda("anqa_market"), portfolio, systemProgram: SystemProgram.programId })
       .rpc()
   );
   await step("ledger", () => exists(ledger), () =>
@@ -262,7 +270,7 @@ async function main() {
     .accounts({ cranker: admin.publicKey, market, riskGroup, assetSlots, oracleState, internalOracle, venueClock })
     .rpc()
     .then(() => console.log("  ✓  re-anchored at a clean start"))
-    .catch((e: any) => console.log("  ·  re-anchor:", String(e?.message ?? e).slice(0, 80)));
+    .catch((e: any) => console.log("  ·  re-anchor:", explain(e, 120)));
   await sleep(PACE);
 
   // Fresh mark, then re-quote from scratch.
@@ -289,7 +297,7 @@ async function main() {
     .accounts({ market, riskGroup, assetSlots, portfolio })
     .rpc()
     .then(() => console.log("  ✓  portfolio recertified"))
-    .catch((e: any) => console.log("  ·  refresh:", String(e?.message ?? e).slice(0, 80)));
+    .catch((e: any) => console.log("  ·  refresh:", explain(e, 120)));
   await sleep(PACE);
 
   let rested = 0;
@@ -312,7 +320,7 @@ async function main() {
         rested++;
         await sleep(PACE);
       } catch (e: any) {
-        console.log(`  ·  level ${i}:`, String(e?.message ?? e).slice(0, 90));
+        console.log(`  ·  level ${i}:`, explain(e, 120));
       }
     }
   }

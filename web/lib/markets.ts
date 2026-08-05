@@ -36,15 +36,22 @@ export type MarketInfo = {
 };
 
 /**
- * Hub 920's shared collateral mint (from `app/.demo-mint-920.json`).
+ * Hub 930's shared collateral mint (from `app/.demo-mint-930.json`).
  *
  * This tracks GROUP — a stale mint here points the terminal at the right
  * markets with the wrong collateral, which fails at deposit rather than at
  * load, so it is worth changing both in the same edit.
+ *
+ * Hub 920 was retired on 2026-08-05: a portfolio permissioned *after*
+ * delegation is frozen at TEE ingress forever, and that account happened to
+ * hold two thirds of BTC's open interest — so asset 0's backing buckets could
+ * never be refilled and every BTC fill was refused `LockActive` and silently
+ * discarded. Nothing reachable could unwind it. Permissions are now created
+ * before delegation, so this cannot recur.
  */
-const HUB_MINT = "2kSiLu2FUwskEpqMZUBSS98udt1J9mvorL8WEH7kaeUi";
+const HUB_MINT = "EkG3BSd7nnKk73VTUYeDd6v8iagKB41udXnxmMwL2FUn";
 
-const GROUP = 920;
+const GROUP = 930;
 
 export const MARKETS: MarketInfo[] = [
   {
@@ -175,7 +182,21 @@ export const MARKETS: MarketInfo[] = [
   },
 ];
 
-export const DEFAULT_MARKET_ID = Number(process.env.NEXT_PUBLIC_MARKET_ID ?? GROUP);
+/**
+ * The market the terminal opens on.
+ *
+ * `NEXT_PUBLIC_MARKET_ID` is only honoured when it names a market that is
+ * actually listed above. It is set in three places that drift apart — a local
+ * `.env.local`, the Vercel production environment, and this file — and when a
+ * listing is retired the stale ones point at a market that still exists
+ * on-chain but can no longer trade. That failure is invisible: the book loads,
+ * the chart loads, orders are accepted, and nothing ever fills. Falling back to
+ * the first live listing makes a stale value cost nothing.
+ */
+export const DEFAULT_MARKET_ID = (() => {
+  const want = Number(process.env.NEXT_PUBLIC_MARKET_ID ?? NaN);
+  return MARKETS.some((m) => m.id === want) ? want : MARKETS[0].id;
+})();
 
 export function marketById(id: number): MarketInfo {
   return MARKETS.find((m) => m.id === id) ?? MARKETS[0];
