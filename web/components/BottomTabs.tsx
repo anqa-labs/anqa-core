@@ -59,21 +59,6 @@ export function BottomTabs({
   const position = kernel?.positions.find(
     (p) => p.assetIndex === (anqa.market?.assetIndex ?? 0)
   );
-  const frac = lotFraction(anqa.market);
-  /** Per-lot USD — the unit the chain speaks; convert before showing. */
-  const mark = anqa.markPrice === null ? null : anqa.markPrice / 1e6;
-
-  // Live unrealised PnL: the kernel marks PnL at the posted mark, which on
-  // devnet only moves every ~30s. Re-anchor the display to the streamed
-  // index between marks — exact again the moment the kernel refreshes.
-  const live = usePythLive(anqa.marketInfo.pythFeedId);
-  const pnlLive = (() => {
-    const base = Number(kernel?.pnl ?? 0n) / 1e6;
-    if (!position || live === null || mark === null) return base;
-    const delta = (live * frac - mark) * Number(position.lots);
-    return base + (position.isLong ? delta : -delta);
-  })();
-
   const run = async (
     label: string,
     layer: "base" | "er",
@@ -345,7 +330,7 @@ export function BottomTabs({
                     "Side",
                     "Size",
                     "Entry",
-                    "Unrealised (mark)",
+                    "Unrealised (live)",
                     "Liq. price",
                     "Margin",
                     "",
@@ -938,12 +923,13 @@ function PendingPositionRow({
   );
 }
 
-/** One position, marked with the protocol's accepted oracle price.
+/** One position with two deliberately separate prices:
  *
- * The terminal also streams a faster index price, but using that here made the
- * PnL disagree with the MARK displayed in the market bar. Risk, liquidation
- * and settlement all speak in the accepted mark, so the position row does too.
- */
+ * - live Pyth index for the responsive trader-facing unrealised PnL;
+ * - accepted rollup mark for risk, liquidation and settlement.
+ *
+ * The row names the former explicitly. A display tick never mutates protocol
+ * accounting; it only answers what the position is worth right now. */
 function PositionRow({
   row,
   busy,
@@ -957,8 +943,13 @@ function PositionRow({
   onClose: () => void;
   onGoto: () => void;
 }) {
-  // `row.pnl` is derived from the same accepted mark shown in MarketBar.
-  const pnl = useTweened(row.pnl, 350) ?? 0;
+  const live = usePythLive(row.market.pythFeedId);
+  const displayMark = live ?? row.mark;
+  const livePnl =
+    row.entry !== null && displayMark !== null
+      ? (row.isLong ? displayMark - row.entry : row.entry - displayMark) * row.size
+      : row.pnl;
+  const pnl = useTweened(livePnl, 180) ?? 0;
   const roe = row.legMarginUsd > 0 ? (pnl / row.legMarginUsd) * 100 : 0;
   const tone = pnl > 0 ? "text-bid" : pnl < 0 ? "text-ask" : "text-muted";
   return (
@@ -992,13 +983,16 @@ function PositionRow({
       <span
         className={`tnum ${tone}`}
         title={
-          row.mark === null
-            ? "Waiting for the protocol mark"
-            : `PnL at protocol mark ${row.mark.toLocaleString(undefined, {
+          displayMark === null
+            ? "Waiting for a market price"
+            : `${live !== null ? "Live Pyth index" : "Protocol mark"} ${displayMark.toLocaleString(undefined, {
                 maximumFractionDigits: 8,
-              })}`
+              })}. Risk and liquidation continue to use the accepted rollup mark.`
         }
       >
+        {live !== null && (
+          <span className="live-dot mr-1 inline-block h-1 w-1 rounded-full bg-bid align-middle" />
+        )}
         {pnl < 0 ? "−" : "+"}$
         {Math.abs(pnl).toLocaleString(undefined, {
           minimumFractionDigits: 2,
