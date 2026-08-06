@@ -31,6 +31,10 @@ type Cached = { token: string; exp: number };
  * token at once. They must share one challenge: every independent request is
  * another wallet popup for the same identity proof. */
 const pending = new Map<string, Promise<string | null>>();
+/** A failed login must not immediately ask the wallet again. This also guards
+ * adapters that briefly remount their provider when an approval window closes. */
+const lastAttempt = new Map<string, number>();
+const ATTEMPT_COOLDOWN_MS = 60_000;
 
 function cached(owner: string): string | null {
   try {
@@ -81,6 +85,10 @@ export async function teeToken(
   const requestKey = `${base}:${key}`;
   const active = pending.get(requestKey);
   if (active) return active;
+  if (Date.now() - (lastAttempt.get(requestKey) ?? 0) < ATTEMPT_COOLDOWN_MS) {
+    return null;
+  }
+  lastAttempt.set(requestKey, Date.now());
 
   const request = (async () => {
     const cr = await fetch(`${base}/auth/challenge?pubkey=${key}`);
@@ -97,6 +105,7 @@ export async function teeToken(
     if (!lr.ok) return null;
     const { token } = await lr.json();
     remember(key, token);
+    lastAttempt.delete(requestKey);
     return token as string;
   })();
 

@@ -114,7 +114,6 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
     "anonymous" | "authorizing" | "ready" | "unavailable"
   >("anonymous");
   const authOwnerKey = wallet?.publicKey?.toBase58() ?? null;
-  const canSignMessage = !!signMessage;
   const signMessageRef = useRef(signMessage);
   useEffect(() => {
     signMessageRef.current = signMessage;
@@ -145,7 +144,7 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
     // a new function identity on every provider render; depending on it made
     // this effect mint the same token repeatedly and reopened the wallet after
     // every approval.
-  }, [authOwnerKey, canSignMessage]);
+  }, [authOwnerKey]);
 
   const conns = useMemo(
     () => ({
