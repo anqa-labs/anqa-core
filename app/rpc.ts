@@ -97,3 +97,47 @@ export function baseConnection(
 ): Connection {
   return new Connection(url, { commitment: "confirmed", ...config, fetch: retryingFetch });
 }
+
+/**
+ * Make Anchor confirmations HTTP-only.
+ *
+ * web3.js normally opens one `signatureSubscribe` WebSocket per transaction.
+ * If the rollup socket disconnects, its reconnect loop can retain thousands of
+ * dead subscriptions; the keeper eventually reached 4GB and crashed. Polling
+ * `getSignatureStatuses` has the same confirmation semantics without keeping
+ * any subscription state alive.
+ */
+export function useHttpConfirmation(connection: Connection): Connection {
+  (connection as any).confirmTransaction = async (
+    strategy: string | { signature: string; lastValidBlockHeight?: number },
+    commitment: "processed" | "confirmed" | "finalized" = "confirmed"
+  ) => {
+    const signature = typeof strategy === "string" ? strategy : strategy.signature;
+    const lastValid = typeof strategy === "string" ? undefined : strategy.lastValidBlockHeight;
+    const deadline = Date.now() + 60_000;
+
+    while (Date.now() < deadline) {
+      const response = await connection.getSignatureStatuses([signature], {
+        searchTransactionHistory: true,
+      });
+      const status = response.value[0];
+      if (status) {
+        if (status.err) return { context: response.context, value: { err: status.err } };
+        const level = status.confirmationStatus;
+        const done = commitment === "processed"
+          || level === "finalized"
+          || (commitment === "confirmed" && level === "confirmed");
+        if (done) return { context: response.context, value: { err: null } };
+      }
+      if (lastValid !== undefined) {
+        const height = await connection.getBlockHeight("confirmed");
+        if (height > lastValid) {
+          throw new Error(`transaction ${signature} expired before confirmation`);
+        }
+      }
+      await sleep(250);
+    }
+    throw new Error(`transaction ${signature} was not confirmed in 60 seconds`);
+  };
+  return connection;
+}

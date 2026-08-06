@@ -507,8 +507,11 @@ pub struct PendingFill {
     pub taker_is_ask: u8,
     /// 1 when the match fully consumed the maker's resting order.
     pub maker_order_closed: u8,
+    /// 1 when this fill came from `close_position` and must never increase or
+    /// reverse the taker's exposure when it eventually settles.
+    pub reduce_only: u8,
     pub active: u8,
-    pub _pad: [u8; 5],
+    pub _pad: [u8; 4],
 }
 
 /// Pending fills the settle crank may lag behind. Small on purpose: a full
@@ -572,6 +575,7 @@ impl Book {
         taker: Pubkey,
         taker_side: Side,
         fill: &FillRecord,
+        reduce_only: bool,
     ) -> Result<()> {
         require!(self.pending_free() > 0, AnqaError::PendingFillsFull);
         let slot =
@@ -584,11 +588,22 @@ impl Book {
             base_lots: fill.base_lots,
             taker_is_ask: taker_side.as_u8(),
             maker_order_closed: if fill.maker_order_closed { 1 } else { 0 },
+            reduce_only: u8::from(reduce_only),
             active: 1,
-            _pad: [0; 5],
+            _pad: [0; 4],
         };
         self.pending_count += 1;
         Ok(())
+    }
+
+    /// A second close must not size itself from a position whose first close
+    /// has matched but has not reached the risk kernel yet.
+    pub fn has_pending_reduce_only(&self, taker: &Pubkey) -> bool {
+        (0..self.pending_count as usize).any(|i| {
+            let slot = (self.pending_head as usize + i) % PENDING_FILLS;
+            let fill = &self.pending[slot];
+            fill.active == 1 && fill.reduce_only == 1 && fill.taker == *taker
+        })
     }
 
     /// The oldest unsettled fill, without removing it. Settlement is strictly

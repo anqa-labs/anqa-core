@@ -189,6 +189,15 @@ fn close_inner<'info>(
         .current_position(asset_index)
         .ok_or(AnqaError::NoOpenPosition)?;
 
+    // Matching and settlement are decoupled on a dark book. Until the first
+    // close settles, the portfolio still reports the old position; accepting
+    // another close sized from it would queue the same reduction twice and
+    // the second fill could reopen the position on the opposite side.
+    require!(
+        !ctx.accounts.book.load()?.has_pending_reduce_only(&trader),
+        AnqaError::ClosePending
+    );
+
     // Position size is carried in POS_SCALE units; the book speaks base lots.
     let position_lots = u64::try_from(size_q / POS_SCALE).map_err(|_| AnqaError::MathOverflow)?;
     require!(position_lots > 0, AnqaError::NoOpenPosition);
@@ -243,7 +252,7 @@ fn close_inner<'info>(
                 AnqaError::PendingFillsFull
             );
             for f in fills.iter() {
-                book.push_pending(trader, side, f)?;
+                book.push_pending(trader, side, f, true)?;
                 let notional = market
                     .quote_notional(f.price_in_ticks, f.base_lots)
                     .ok_or(AnqaError::MathOverflow)? as u128;

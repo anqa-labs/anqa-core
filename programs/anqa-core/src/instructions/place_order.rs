@@ -213,7 +213,7 @@ pub fn handler<'info>(
                 AnqaError::PendingFillsFull
             );
             for f in fills.iter() {
-                book.push_pending(trader_key, side, f)?;
+                book.push_pending(trader_key, side, f, false)?;
                 let notional = market
                     .quote_notional(f.price_in_ticks, f.base_lots)
                     .ok_or(AnqaError::MathOverflow)? as u128;

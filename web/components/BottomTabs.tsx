@@ -151,11 +151,17 @@ export function BottomTabs({
   };
 
   const [closing, setClosing] = useState<Set<number>>(new Set());
+  const closingRef = useRef<Set<number>>(new Set());
 
   /** Close is one reduce-only rollup send. Released collateral stays in the
    *  trading account; withdrawal remains an explicit wallet action. */
   const closeAndReturn = async (row: CrossPosition) => {
     if (!owner) return;
+    // React state updates after the event returns. The ref closes the tiny but
+    // real window where a rapid second click can submit another close before
+    // the button rerenders disabled.
+    if (closingRef.current.has(row.market.id)) return;
+    closingRef.current.add(row.market.id);
     const acc = anqaAccounts(new BN(row.market.id), new BN(row.market.groupId));
     const worstAsset = row.isLong
       ? (row.mark ?? 0) * 0.96
@@ -181,6 +187,7 @@ export function BottomTabs({
       onDone(`${row.market.symbol} close sent — settling privately`);
       anqa.refresh();
       window.setTimeout(() => {
+        closingRef.current.delete(row.market.id);
         setClosing((current) => {
           const next = new Set(current);
           next.delete(row.market.id);
@@ -188,6 +195,7 @@ export function BottomTabs({
         });
       }, 30_000);
     } catch (e: any) {
+      closingRef.current.delete(row.market.id);
       setClosing((current) => {
         const next = new Set(current);
         next.delete(row.market.id);
@@ -202,6 +210,13 @@ export function BottomTabs({
   // The trader's whole book of risk — every market, one table. Margin is
   // isolated per market on-chain; the view should not be.
   const allPositions = useAllPositions();
+  // Flash-style acknowledgement: once the close transaction is accepted, the
+  // row leaves immediately. The private account poll remains authoritative;
+  // a failed send restores the row, and the 30s fallback makes a stalled
+  // settlement visible again instead of pretending it completed.
+  const visiblePositions = allPositions.filter(
+    (row) => !closing.has(row.market.id)
+  );
   // Same rule for what's still waiting: a submitted order rests on its
   // market's book until filled or cancelled, wherever the trader is looking.
   const allOrders = useAllOrders();
@@ -260,7 +275,8 @@ export function BottomTabs({
 
   const counts: Record<Tab, number | null> = {
     positions:
-      allPositions.length + pendingPositions.length || (position ? 1 : 0),
+      visiblePositions.length + pendingPositions.length ||
+      (position && !closing.has(anqa.marketInfo.id) ? 1 : 0),
     orders: workingOrders.length + anqa.triggers.length,
     resting: restingOrders.length,
     account: null,
@@ -317,10 +333,10 @@ export function BottomTabs({
             <Empty>Connect a wallet.</Empty>
           ) : tab === "positions" ? (
             anqa.loading &&
-            allPositions.length === 0 &&
+            visiblePositions.length === 0 &&
             pendingPositions.length === 0 ? (
               <SkeletonRows />
-            ) : allPositions.length === 0 && pendingPositions.length === 0 ? (
+            ) : visiblePositions.length === 0 && pendingPositions.length === 0 ? (
               <Empty>No open positions on any market.</Empty>
             ) : (
               <>
@@ -344,7 +360,7 @@ export function BottomTabs({
                     onGoto={() => onSelectMarket(trade.marketId)}
                   />
                 ))}
-                {allPositions.map((row) => (
+                {visiblePositions.map((row) => (
                   <PositionRow
                     key={row.market.id}
                     row={row}

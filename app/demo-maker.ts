@@ -48,7 +48,13 @@ const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
 const GROUP_ID = new BN(process.env.ANQA_GROUP ?? process.env.ANQA_DEMO_MARKET ?? 777);
 const DEC = 6;
 const COLLATERAL = 2_000_000 * 10 ** DEC;
-const LEVELS = 4;
+// Keep enough visible rungs for the terminal to feel like a real market while
+// leaving most of the on-chain arena available to visitors. The book supports
+// 32 orders per side and the public depth publishes 12 price levels per side.
+const LEVELS = Math.max(
+  1,
+  Math.min(12, Number(process.env.ANQA_MAKER_LEVELS ?? 10))
+);
 const LOTS = Number(process.env.ANQA_MAKER_LOTS ?? 2500); // 2.5 BTC per level at 0.001-BTC lots
 // Tight top-of-book: a market order pays half a spread of instant PnL the
 // moment it fills, and 8bps read as "opened $30 down" on a mid-size entry.
@@ -309,9 +315,10 @@ async function main() {
     ] as const) {
       try {
         await pEr.methods
-          // Shown, not hidden: this maker exists to give the ladder something
-          // to display. Set HIDE_RUNGS=1 to quote the same ladder invisibly and
-          // watch depth stay empty while fills still print to the tape.
+          // Keep this on the single-order path for now: unlike the deployed
+          // batch instruction, it sweeps lapsed backing before refreshing the
+          // maker's live portfolio, so an existing position cannot wedge the
+          // ladder with `LockActive`.
           .placeOrder(side, { postOnly: {} }, new BN(px), new BN(LOTS), new BN(Date.now() % 1e9 + rested), new BN(0), process.env.HIDE_RUNGS === "1")
           .accounts({
             trader: maker.publicKey, session: null, market, book, riskGroup, assetSlots, oracleState, portfolio,
@@ -323,6 +330,9 @@ async function main() {
         console.log(`  ·  level ${i}:`, explain(e, 120));
       }
     }
+  }
+  if (rested !== LEVELS * 2) {
+    throw new Error(`incomplete ladder: ${rested}/${LEVELS * 2} quotes rested`);
   }
   // The book is private and a maker is not a member of it — reading it back
   // is a courtesy, not a requirement, so report what the venue publishes

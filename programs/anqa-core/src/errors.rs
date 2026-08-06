@@ -95,6 +95,8 @@ pub enum AnqaError {
     /// permission record reaches. Close first, or leave the snapshot alone.
     #[msg("portfolio holds an open position; committing it would publish the position on base")]
     PositionOpen,
+    #[msg("a reduce-only close is already pending settlement")]
+    ClosePending,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

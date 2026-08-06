@@ -24,7 +24,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { BN, Program } from "@coral-xyz/anchor";
 import { ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
-import { baseConnection } from "./rpc";
+import { baseConnection, useHttpConfirmation } from "./rpc";
 import { spawn } from "child_process";
 import bs58 from "bs58";
 import fs from "fs";
@@ -78,7 +78,7 @@ process.on("uncaughtException", (e) =>
 );
 
 async function main() {
-  const conn = baseConnection(RPC);
+  const conn = useHttpConfirmation(baseConnection(RPC));
   const keeper = Keypair.fromSecretKey(
     Uint8Array.from(
       JSON.parse(
@@ -91,7 +91,9 @@ async function main() {
   );
   // The TEE endpoint filters reads per account; a signed session tells
   // it who we are. Without this the keeper reads back nulls.
-  const er = new Connection(await teeRpcFor(keeper, ER_RPC), "confirmed");
+  const er = useHttpConfirmation(
+    new Connection(await teeRpcFor(keeper, ER_RPC), "confirmed")
+  );
   const idl = JSON.parse(fs.readFileSync("target/idl/anqa_core.json", "utf-8"));
   const mk = (c: Connection) =>
     new Program(
@@ -833,7 +835,8 @@ async function main() {
 
   // A ladder does not have to be empty to be wrong.
   //
-  // The maker quotes ±2…8bps around the mark and then exits — it is a
+  // The maker quotes a configurable multi-level ladder around the mark and
+  // then exits — it is a
   // one-shot, not a daemon. So when the mark walks away, the rungs stay where
   // they were: the near side is now through the mark and free to be picked
   // off, the far side is nowhere near tradeable, and the watchdog's original
@@ -845,6 +848,11 @@ async function main() {
   // against the mark: a fresh ladder is symmetric, so any gap between the two
   // is exactly how far the quotes have been left behind.
   const DRIFT_BPS = Number(process.env.ANQA_REQUOTE_DRIFT_BPS ?? 5);
+  /** Visible price levels the demo terminal should maintain on each side. */
+  const MAKER_LEVELS = Math.max(
+    1,
+    Math.min(12, Number(process.env.ANQA_MAKER_LEVELS ?? 10))
+  );
   /** Floor between drift requotes. Emptiness is urgent; drift is not, and a
    *  ladder that re-lays every tick costs transactions and cancels fills that
    *  were about to happen. */
@@ -853,12 +861,30 @@ async function main() {
   const requote = (m: Mkt) =>
     guard("requote", async () => {
       if (makerBusy || m.requoting) return;
-      const bk: any = await pEr.account.book.fetch(m.book);
-      const active = (s: any) => s.orders.filter((o: any) => o.active === 1).length;
+      // Reserve the global slot before the first await. Without this, two
+      // timers can both pass the idle check and spawn makers concurrently.
+      makerBusy = true;
+      m.requoting = true;
+      const releaseMaker = () => {
+        makerBusy = false;
+        m.requoting = false;
+      };
+      const bk: any = await pEr.account.book.fetch(m.book).catch((e: any) => {
+        releaseMaker();
+        throw e;
+      });
+      const visibleLevels = (s: any) =>
+        new Set(
+          s.orders
+            .filter((o: any) => o.active === 1 && !o.hidden)
+            .map((o: any) => Number(o.priceInTicks))
+        ).size;
       let reason: string | null = null;
+      const bidLevels = visibleLevels(bk.bids);
+      const askLevels = visibleLevels(bk.asks);
 
-      if (active(bk.bids) === 0 || active(bk.asks) === 0) {
-        reason = "a side of the book is empty";
+      if (bidLevels < MAKER_LEVELS || askLevels < MAKER_LEVELS) {
+        reason = `ladder has ${bidLevels} bid / ${askLevels} ask levels (target ${MAKER_LEVELS})`;
       } else {
         // Both sides quoting — but are they quoting the right price?
         const live = (s: any) =>
@@ -882,10 +908,9 @@ async function main() {
 
       if (!reason) {
         m.failures = 0;
+        releaseMaker();
         return;
       }
-      makerBusy = true;
-      m.requoting = true;
       log("requote", `${m.id} ${reason} — re-running the maker`);
       const child = spawn(
         "npx",
@@ -901,9 +926,13 @@ async function main() {
           stdio: "ignore",
         }
       );
+      child.on("error", (e) => {
+        releaseMaker();
+        m.failures++;
+        log("requote", `${m.id} maker failed to start: ${String(e).slice(0, 80)}`);
+      });
       child.on("exit", (code) => {
-        makerBusy = false;
-        m.requoting = false;
+        releaseMaker();
         if (code === 0) {
           m.failures = 0;
           log("requote", `${m.id} ladder restored`);

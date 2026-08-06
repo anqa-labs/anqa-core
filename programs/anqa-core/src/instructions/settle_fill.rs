@@ -112,9 +112,35 @@ pub fn handler(ctx: Context<SettleFill>) -> Result<()> {
     // kernel now accounts for the exposure, on refusal there is nothing to back.
     ctx.accounts.taker_portfolio.load_mut()?.release(fill_margin);
 
+    // A close is reduce-only at settlement too, not merely when it was
+    // matched. This is the final guard against duplicate/stale close intents:
+    // if earlier FIFO fills already flattened or reversed the taker, consume
+    // this fill without letting it create fresh exposure.
+    let reduce_only_valid = if fill.reduce_only == 1 {
+        match ctx
+            .accounts
+            .taker_portfolio
+            .load()?
+            .current_position(asset_index as u32)
+        {
+            Some((is_long, size_q)) => {
+                let closes_current_side = (taker_side == Side::Ask && is_long)
+                    || (taker_side == Side::Bid && !is_long);
+                closes_current_side && size_q / POS_SCALE >= fill.base_lots as u128
+            }
+            None => false,
+        }
+    } else {
+        true
+    };
+    if !reduce_only_valid {
+        msg!("anqa: stale reduce-only fill refused before risk settlement");
+    }
+
     // Judge the fill: still inside the band, and the kernel accepts it.
     let mark = ctx.accounts.oracle_state.live_mark(&market.oracle)?;
-    let mut accepted = band_ok(fill_price_quote, mark, market.oracle.max_band_bps);
+    let mut accepted = reduce_only_valid
+        && band_ok(fill_price_quote, mark, market.oracle.max_band_bps);
 
     if accepted {
         let mut group = ctx.accounts.risk_group.load_mut()?;

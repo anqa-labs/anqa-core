@@ -10607,6 +10607,11 @@
       "code": 6043,
       "name": "PositionOpen",
       "msg": "portfolio holds an open position; committing it would publish the position on base"
+    },
+    {
+      "code": 6044,
+      "name": "ClosePending",
+      "msg": "a reduce-only close is already pending settlement"
     }
   ],
   "types": [
@@ -11772,6 +11777,14 @@
             "type": "u8"
           },
           {
+            "name": "reduce_only",
+            "docs": [
+              "1 when this fill came from `close_position` and must never increase or",
+              "reverse the taker's exposure when it eventually settles."
+            ],
+            "type": "u8"
+          },
+          {
             "name": "active",
             "type": "u8"
           },
@@ -11780,7 +11793,7 @@
             "type": {
               "array": [
                 "u8",
-                5
+                4
               ]
             }
           }
