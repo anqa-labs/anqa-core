@@ -91,11 +91,16 @@ export async function uncredited(
   er: Program | null,
   c: MoneyCtx
 ): Promise<number> {
+  let deposited = 0;
   try {
     const ledger: any = await (base as any).account.userDepositLedger.fetch(
       c.acc.ledgerOf(c.owner)
     );
-    const deposited = Number(ledger.deposited.toString()) / 1e6;
+    deposited = Number(ledger.deposited.toString()) / 1e6;
+  } catch {
+    return 0;
+  }
+  try {
     const pf: any = await ((er ?? base) as any).account.portfolio.fetch(
       c.acc.portfolioOf(c.owner)
     );
@@ -103,7 +108,11 @@ export async function uncredited(
       Number(new BN(pf.claimedHighWater, 10, "le").toString()) / 1e6;
     return Math.max(0, deposited - claimed);
   } catch {
-    return 0;
+    // The ledger is public and authoritative: if the private portfolio cannot
+    // be read, conservatively treat every deposited dollar as still pending.
+    // Returning zero here used to make an RPC/auth outage look like an empty
+    // account and allowed another custody transfer for the same collateral.
+    return deposited;
   }
 }
 
@@ -344,9 +353,21 @@ export async function fundMarket(
     // nudge and the poll below is what actually establishes the credit.
     void claim();
     for (let i = 0; i < 8; i++) {
-      if ((await collateralOf(er ?? base, c)) >= usd - 1) break;
+      if ((await uncredited(base, er, c)) <= 1) break;
       await sleep(1500);
     }
+
+    const stillPending = await uncredited(base, er, c);
+    if (stillPending > 1) {
+      throw new Error(
+        `A previous $${stillPending.toLocaleString()} deposit is already on Solana and awaiting private credit — no new transaction was submitted`
+      );
+    }
+
+    // A click made while a previous deposit was pending is only a recovery
+    // attempt. Once that prior transfer is credited, return the refreshed
+    // balance and require a deliberate new click for any additional top-up.
+    return collateralOf(er ?? base, c);
   }
 
   const already = await collateralOf(er ?? base, c);

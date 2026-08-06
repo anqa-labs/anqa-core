@@ -145,10 +145,10 @@ export function DepositModal({
       anqa.refresh();
     } catch (e: any) {
       const message = readableError(e);
-      if (/deposit landed|rollup credit is lagging/i.test(message)) {
+      if (/deposit landed|rollup credit is lagging|previous .*deposit is already on solana/i.test(message)) {
         // Custody succeeded. Presenting this as a failed deposit invites the
         // trader to click again and transfer the same amount twice.
-        onDone("Deposit received. The private balance is updating — do not submit it again.");
+        onDone("A deposit is already on Solana. Its private balance is updating; no new transfer was submitted.");
         setAmount("");
         anqa.refresh();
         onClose();
