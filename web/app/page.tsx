@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LandingMotion } from "@/components/LandingMotion";
 import { PhoenixMark, Wordmark } from "@/components/Wordmark";
 
 export const metadata: Metadata = {
@@ -62,10 +63,14 @@ const BIDS = [
 export default function LandingPage() {
   return (
     <div className="min-h-dvh overflow-hidden bg-void text-text selection:bg-phoenix/20 selection:text-bright">
+      <LandingMotion />
       <LandingNav />
 
       <main>
-        <section className="landing-grid relative isolate border-b border-line-soft">
+        <section data-hero className="landing-grid relative isolate border-b border-line-soft">
+          <div data-pointer-glow className="landing-pointer-glow" aria-hidden="true" />
+          <div className="landing-orbit landing-orbit-one" aria-hidden="true" />
+          <div className="landing-orbit landing-orbit-two" aria-hidden="true" />
           <div className="landing-glow pointer-events-none absolute left-1/2 top-[-360px] -z-10 h-[760px] w-[980px] -translate-x-1/2 rounded-full" />
           <div className="mx-auto grid min-h-[760px] max-w-[1440px] items-center gap-16 px-5 pb-24 pt-24 md:px-8 lg:grid-cols-[0.92fr_1.08fr] lg:px-12 lg:pb-28 lg:pt-28">
             <div className="relative z-10 max-w-[680px]">
@@ -107,8 +112,10 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div className="landing-reveal landing-delay-2 relative mx-auto w-full max-w-[680px] lg:mx-0">
-              <MarketVisual />
+            <div data-parallax="0.045" className="landing-parallax landing-reveal landing-delay-2 relative mx-auto w-full max-w-[680px] lg:mx-0">
+              <div data-tilt className="landing-tilt">
+                <MarketVisual />
+              </div>
             </div>
           </div>
         </section>
@@ -118,7 +125,7 @@ export default function LandingPage() {
         <section id="privacy" className="border-b border-line-soft">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
             <div className="grid gap-12 lg:grid-cols-[0.78fr_1.22fr] lg:gap-24">
-              <div>
+              <div data-reveal>
                 <SectionLabel>Privacy model</SectionLabel>
                 <h2 className="mt-5 max-w-[510px] text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
                   The market is visible.
@@ -131,7 +138,7 @@ export default function LandingPage() {
                 </p>
               </div>
 
-              <div className="grid gap-px overflow-hidden rounded-2xl border border-line-soft bg-line-soft md:grid-cols-3">
+              <div data-reveal className="grid gap-px overflow-hidden rounded-2xl border border-line-soft bg-line-soft md:grid-cols-3">
                 <PrivacyColumn label="Private" tone="private">
                   <PrivacyItem>Full order book</PrivacyItem>
                   <PrivacyItem>Order ownership</PrivacyItem>
@@ -159,7 +166,7 @@ export default function LandingPage() {
 
         <section id="architecture" className="relative border-b border-line-soft bg-ink/35">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
-            <div className="mx-auto max-w-[760px] text-center">
+            <div data-reveal className="mx-auto max-w-[760px] text-center">
               <SectionLabel>Protocol architecture</SectionLabel>
               <h2 className="mt-5 text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
                 Custody on Solana.
@@ -173,36 +180,42 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="mt-16 grid gap-3 lg:grid-cols-3">
-              <ArchitectureCard
-                number="01"
-                eyebrow="Trader"
-                title="Browser session"
-                body="The wallet authorizes a scoped, expiring trading key. Orders become instant; deposits and withdrawals still require custody authority."
-                tags={["Session key", "Owner view", "1-click"]}
-              />
-              <ArchitectureCard
-                number="02"
-                eyebrow="MagicBlock PER"
-                title="Private execution"
-                body="The dark CLOB, portfolios, Percolator risk state, oracle acceptance and matching execute together inside the TEE-backed rollup."
-                tags={["Matching", "Risk", "Liquidation"]}
-                featured
-              />
-              <ArchitectureCard
-                number="03"
-                eyebrow="Solana"
-                title="Public custody"
-                body="USDC vaults, permanent configuration, permission records and withdrawal settlement remain on the base layer and publicly auditable."
-                tags={["USDC vault", "Permissions", "Receipts"]}
-              />
+            <div className="reveal-grid mt-16 grid gap-3 lg:grid-cols-3">
+              <div data-reveal>
+                <ArchitectureCard
+                  number="01"
+                  eyebrow="Trader"
+                  title="Browser session"
+                  body="The wallet authorizes a scoped, expiring trading key. Orders become instant; deposits and withdrawals still require custody authority."
+                  tags={["Session key", "Owner view", "1-click"]}
+                />
+              </div>
+              <div data-reveal>
+                <ArchitectureCard
+                  number="02"
+                  eyebrow="MagicBlock PER"
+                  title="Private execution"
+                  body="The dark CLOB, portfolios, Percolator risk state, oracle acceptance and matching execute together inside the TEE-backed rollup."
+                  tags={["Matching", "Risk", "Liquidation"]}
+                  featured
+                />
+              </div>
+              <div data-reveal>
+                <ArchitectureCard
+                  number="03"
+                  eyebrow="Solana"
+                  title="Public custody"
+                  body="USDC vaults, permanent configuration, permission records and withdrawal settlement remain on the base layer and publicly auditable."
+                  tags={["USDC vault", "Permissions", "Receipts"]}
+                />
+              </div>
             </div>
           </div>
         </section>
 
         <section id="features" className="border-b border-line-soft">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
-            <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+            <div data-reveal className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
               <div>
                 <SectionLabel>Built as a venue</SectionLabel>
                 <h2 className="mt-5 max-w-[680px] text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
@@ -217,9 +230,9 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            <div className="mt-14 grid gap-px overflow-hidden rounded-2xl border border-line-soft bg-line-soft md:grid-cols-2 lg:grid-cols-3">
+            <div className="reveal-grid mt-14 grid gap-px overflow-hidden rounded-2xl border border-line-soft bg-line-soft md:grid-cols-2 lg:grid-cols-3">
               {FEATURES.map((feature) => (
-                <article key={feature.index} className="group bg-ink p-7 transition-colors hover:bg-surface md:p-8">
+                <article data-reveal key={feature.index} className="landing-feature-card group bg-ink p-7 transition-colors hover:bg-surface md:p-8">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-phoenix">
                       {feature.eyebrow}
@@ -241,7 +254,7 @@ export default function LandingPage() {
         <section className="relative overflow-hidden">
           <div className="landing-grid absolute inset-0 opacity-45" aria-hidden="true" />
           <div className="landing-glow pointer-events-none absolute left-1/2 top-[-500px] h-[760px] w-[960px] -translate-x-1/2 rounded-full opacity-70" />
-          <div className="relative mx-auto flex max-w-[980px] flex-col items-center px-5 py-28 text-center md:py-40">
+          <div data-reveal className="relative mx-auto flex max-w-[980px] flex-col items-center px-5 py-28 text-center md:py-40">
             <PhoenixMark className="h-9 w-9 text-phoenix" />
             <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.2em] text-phoenix">
               Known by name, unseen by eye
@@ -428,7 +441,7 @@ function VisualMetric({ label, value, tone }: { label: string; value: string; to
 function ProofStrip() {
   return (
     <section className="border-b border-line-soft bg-ink/45">
-      <div className="mx-auto grid max-w-[1280px] grid-cols-2 gap-px px-5 md:grid-cols-4 md:px-8">
+      <div className="reveal-grid mx-auto grid max-w-[1280px] grid-cols-2 gap-px px-5 md:grid-cols-4 md:px-8">
         <MiniProof value="9" label="live perp markets" />
         <MiniProof value="PER" label="private execution" />
         <MiniProof value="1-click" label="session trading" />
@@ -440,7 +453,7 @@ function ProofStrip() {
 
 function MiniProof({ value, label }: { value: string; label: string }) {
   return (
-    <div className="border-x border-line-soft px-4 py-6 text-center">
+    <div data-reveal className="border-x border-line-soft px-4 py-6 text-center">
       <p className="tnum text-[18px] font-medium text-bright">{value}</p>
       <p className="mt-1 text-[9px] uppercase tracking-[0.12em] text-dim">{label}</p>
     </div>
@@ -480,7 +493,7 @@ function PrivacyItem({ children }: { children: React.ReactNode }) {
 
 function ArchitectureCard({ number, eyebrow, title, body, tags, featured = false }: { number: string; eyebrow: string; title: string; body: string; tags: readonly string[]; featured?: boolean }) {
   return (
-    <article className={`relative overflow-hidden rounded-2xl border p-7 md:p-8 ${featured ? "border-phoenix-soft bg-surface" : "border-line-soft bg-ink"}`}>
+    <article className={`landing-architecture-card relative h-full overflow-hidden rounded-2xl border p-7 md:p-8 ${featured ? "border-phoenix-soft bg-surface" : "border-line-soft bg-ink"}`}>
       {featured && <div className="landing-card-glow absolute -right-24 -top-24 h-52 w-52 rounded-full" />}
       <div className="relative flex items-center justify-between">
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-phoenix">{eyebrow}</span>
