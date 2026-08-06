@@ -270,7 +270,20 @@ body {
 .badge-pop { display: inline-block; animation: badge-pop 260ms ease-out; }
 
 /* Depth bars grow and shrink instead of jumping. */
-.depth-bar { transition: width 320ms ease; }
+.depth-bar { transition: width 320ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* The spread readout breathes once when either best level moves. */
+@keyframes spread-tick {
+  0% {
+    color: var(--color-bright);
+    background: color-mix(in oklab, var(--color-phoenix) 14%, transparent);
+  }
+  100% { background: transparent; }
+}
+.spread-tick {
+  animation: spread-tick 520ms ease-out;
+  border-radius: 3px;
+}
 
 /* Toasts slide in like a print and see themselves out. */
 @keyframes toast-away {
@@ -359,5 +372,11 @@ body {
   }
   .picker-row {
     transition: none;
+  }
+  .depth-bar {
+    transition: none;
+  }
+  .spread-tick {
+    animation: none;
   }
 }

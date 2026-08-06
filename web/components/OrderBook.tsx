@@ -53,10 +53,9 @@ export function OrderBook({ anqa }: { anqa: Anqa }) {
 }
 
 function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
-  // Book prices and the mark are per lot; the trader reads per BTC.
+  // Book prices are per lot; the trader reads per whole base asset.
   const frac = lotFraction(anqa.market);
   const px = (t: any) => ticksToUsd(Number(t.toString()), tick) / frac;
-  const mark = anqa.markPrice === null ? null : anqa.markPrice / 1e6 / frac;
 
   // Aggregate depth: totals per price, published by the program from inside
   // the rollup. It says how much is resting and never whose it is — the one
@@ -64,6 +63,15 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
   const depth = useDepth(anqa.marketInfo.id);
   const asks = depth?.asks ?? [];
   const bids = depth?.bids ?? [];
+  const bestAsk = asks.length ? Math.min(...asks.map((l) => px(l.priceInTicks))) : null;
+  const bestBid = bids.length ? Math.max(...bids.map((l) => px(l.priceInTicks))) : null;
+  const spread = bestAsk !== null && bestBid !== null ? Math.max(0, bestAsk - bestBid) : null;
+  const midpoint = bestAsk !== null && bestBid !== null ? (bestAsk + bestBid) / 2 : null;
+  const spreadPct = spread !== null && midpoint !== null && midpoint > 0
+    ? (spread / midpoint) * 100
+    : null;
+  // One price tick as the trader sees it: SOL is currently $0.01, BTC $1.00.
+  const tickUsd = ticksToUsd(1, tick) / frac;
   // Which levels the trader has size in — theirs to know, nobody else's.
   const mine = new Set(
     [...anqa.myBids, ...anqa.myAsks].map((o) => Number(o.priceInTicks.toString()))
@@ -84,7 +92,7 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
           <Rows rows={asks} mine={mine} side="ask" px={px} maxLots={maxLots} frac={frac} />
         </div>
 
-        <MidMark mark={mark} />
+        <SpreadBar tickUsd={tickUsd} spreadPct={spreadPct} />
 
         <div className="flex-1 min-h-0 overflow-y-auto">
           <Rows rows={bids} mine={mine} side="bid" px={px} maxLots={maxLots} frac={frac} />
@@ -100,21 +108,35 @@ function BookView({ anqa, tick }: { anqa: Anqa; tick: any }) {
   );
 }
 
-/** The number in the middle of the book: glides, and flashes its direction. */
-function MidMark({ mark }: { mark: number | null }) {
-  const shown = useTweened(mark);
-  const flash = useTickFlash(mark);
+/** Phoenix-style divider: price increment, label, and live relative spread. */
+function SpreadBar({
+  tickUsd,
+  spreadPct,
+}: {
+  tickUsd: number;
+  spreadPct: number | null;
+}) {
+  const shown = useTweened(spreadPct, 280);
+  const flash = useTickFlash(spreadPct);
+  const tickDp = tickUsd >= 1 ? 2 : Math.min(8, Math.max(2, Math.ceil(-Math.log10(tickUsd))));
+
   return (
-    <div className="shrink-0 flex items-center justify-between px-3 py-2 border-y border-line-soft bg-surface/60">
+    <div className="grid grid-cols-3 shrink-0 items-center px-3 py-2 border-y border-line-soft bg-surface/60 text-[11px]">
+      <span className="tnum text-text">
+        {tickUsd.toLocaleString(undefined, {
+          minimumFractionDigits: tickDp,
+          maximumFractionDigits: tickDp,
+        })}
+      </span>
+      <span className="text-center font-medium text-muted">Spread</span>
       <span
         key={flash.key}
-        className={`tnum text-[15px] font-semibold leading-none px-1 -mx-1 ${
-          flash.dir === "up" ? "text-bid flash-up" : flash.dir === "down" ? "text-ask flash-down" : "text-phoenix"
+        className={`tnum text-right text-text px-1 -mr-1 ${
+          flash.dir ? "spread-tick" : ""
         }`}
       >
-        {shown === null ? "—" : shown.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {shown === null ? "—" : `${shown.toFixed(3)}%`}
       </span>
-      <span className="text-[9px] uppercase tracking-[0.1em] text-dim">mark</span>
     </div>
   );
 }
@@ -143,31 +165,70 @@ function Rows({
       {rows.map((l) => {
         running += l.baseLots;
         return (
-          <div
+          <DepthRow
             key={l.priceInTicks}
-            className="relative grid grid-cols-3 px-3 py-[3px] text-[11px] row-hover row-in"
-          >
-            <div
-              className={`absolute inset-y-0 right-0 depth-bar ${bar}`}
-              style={{ width: `${Math.min(100, (l.baseLots / maxLots) * 100)}%` }}
-            />
-            <span className={`relative tnum font-medium ${tone}`}>
-              {px(l.priceInTicks).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </span>
-            <span className="relative tnum text-right text-text">
-              {(l.baseLots * frac).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-            </span>
-            <span className="relative tnum text-right text-muted">
-              {(running * frac).toLocaleString(undefined, { maximumFractionDigits: 3 })}
-              {/* Only the trader can tell which levels carry their own size. */}
-              {mine.has(l.priceInTicks) && (
-                <span className="text-phoenix/80 ml-1 text-[9px]">yours</span>
-              )}
-            </span>
-          </div>
+            level={l}
+            runningLots={running}
+            mine={mine.has(l.priceInTicks)}
+            tone={tone}
+            bar={bar}
+            px={px}
+            maxLots={maxLots}
+            frac={frac}
+          />
         );
       })}
     </>
+  );
+}
+
+/** A stable price level. New levels slide in; changing sizes count and flash. */
+function DepthRow({
+  level,
+  runningLots,
+  mine,
+  tone,
+  bar,
+  px,
+  maxLots,
+  frac,
+}: {
+  level: Level;
+  runningLots: number;
+  mine: boolean;
+  tone: string;
+  bar: string;
+  px: (t: any) => number;
+  maxLots: number;
+  frac: number;
+}) {
+  const size = useTweened(level.baseLots * frac, 280) ?? level.baseLots * frac;
+  const total = useTweened(runningLots * frac, 280) ?? runningLots * frac;
+  const flash = useTickFlash(level.baseLots);
+
+  return (
+    <div className="relative grid grid-cols-3 px-3 py-[3px] text-[11px] row-hover row-in">
+      <div
+        className={`absolute inset-y-0 right-0 depth-bar ${bar}`}
+        style={{ width: `${Math.min(100, (level.baseLots / maxLots) * 100)}%` }}
+      />
+      <span className={`relative tnum font-medium ${tone}`}>
+        {px(level.priceInTicks).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+      </span>
+      <span
+        key={flash.key}
+        className={`relative tnum text-right text-text px-1 -mr-1 ${
+          flash.dir === "up" ? "flash-up" : flash.dir === "down" ? "flash-down" : ""
+        }`}
+      >
+        {size.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+      </span>
+      <span className="relative tnum text-right text-muted">
+        {total.toLocaleString(undefined, { maximumFractionDigits: 3 })}
+        {/* Only the trader can tell which levels carry their own size. */}
+        {mine && <span className="text-phoenix/80 ml-1 text-[9px]">yours</span>}
+      </span>
+    </div>
   );
 }
 
