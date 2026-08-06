@@ -1,7 +1,8 @@
 "use client";
 
-// The bundled bs58 ships no types; the encode signature is all we need.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// The bundled bs58 version has no declarations; keep its untyped surface to
+// the one method used by the authentication handshake.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const bs58: { encode: (b: Uint8Array) => string } = require("bs58");
 import { PublicKey } from "@solana/web3.js";
 
@@ -26,6 +27,11 @@ const KEY = (owner: string) => `anqa-tee-token-${owner}`;
 
 type Cached = { token: string; exp: number };
 
+/** React strict mode, reconnects and sibling readers can all ask for the same
+ * token at once. They must share one challenge: every independent request is
+ * another wallet popup for the same identity proof. */
+const pending = new Map<string, Promise<string | null>>();
+
 function cached(owner: string): string | null {
   try {
     const raw = window.localStorage.getItem(KEY(owner));
@@ -40,7 +46,12 @@ function cached(owner: string): string | null {
 
 function remember(owner: string, token: string) {
   try {
-    const exp = JSON.parse(atob(token.split(".")[1])).exp as number;
+    // JWT payloads are base64url, while `atob` accepts ordinary base64. Tokens
+    // containing `-` or `_` previously failed this parse and were never cached,
+    // so the next render asked the wallet to sign the same login again.
+    const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const exp = JSON.parse(atob(padded)).exp as number;
     window.localStorage.setItem(KEY(owner), JSON.stringify({ token, exp }));
   } catch {
     // an unreadable token is still usable; it just will not be reused
@@ -67,21 +78,34 @@ export async function teeToken(
   if (hit) return hit;
   if (!sign) return null;
 
-  const cr = await fetch(`${base}/auth/challenge?pubkey=${key}`);
-  if (!cr.ok) return null;
-  const { challenge } = await cr.json();
+  const requestKey = `${base}:${key}`;
+  const active = pending.get(requestKey);
+  if (active) return active;
 
-  const signature = bs58.encode(await sign(new TextEncoder().encode(challenge)));
+  const request = (async () => {
+    const cr = await fetch(`${base}/auth/challenge?pubkey=${key}`);
+    if (!cr.ok) return null;
+    const { challenge } = await cr.json();
 
-  const lr = await fetch(`${base}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pubkey: key, challenge, signature }),
-  });
-  if (!lr.ok) return null;
-  const { token } = await lr.json();
-  remember(key, token);
-  return token;
+    const signature = bs58.encode(await sign(new TextEncoder().encode(challenge)));
+
+    const lr = await fetch(`${base}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pubkey: key, challenge, signature }),
+    });
+    if (!lr.ok) return null;
+    const { token } = await lr.json();
+    remember(key, token);
+    return token as string;
+  })();
+
+  pending.set(requestKey, request);
+  try {
+    return await request;
+  } finally {
+    pending.delete(requestKey);
+  }
 }
 
 /**

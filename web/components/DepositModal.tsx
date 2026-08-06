@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BN } from "@coral-xyz/anchor";
+import { useEffect, useRef, useState } from "react";
 import { PublicKey } from "@solana/web3.js";
 import { Button } from "./ui";
 import { readableError } from "@/lib/anqa";
@@ -37,6 +36,10 @@ export function DepositModal({
   const [mode, setMode] = useState<"deposit" | "withdraw">("deposit");
   const [wallet, setWallet] = useState(0);
   const [account, setAccount] = useState(0);
+  // React disables the button on the next render. This ref closes the tiny
+  // same-tick window in which a double click can enter the async handler twice
+  // and ask the wallet to sign two custody transactions.
+  const depositInFlight = useRef(false);
 
   const owner = anqa.wallet?.publicKey;
   const MINT = anqa.marketInfo.mint ? new PublicKey(anqa.marketInfo.mint) : null;
@@ -71,6 +74,14 @@ export function DepositModal({
   if (!open) return null;
 
   const n = Number(amount) || 0;
+  const depositLabel =
+    !anqa.privateRpcReady && anqa.privateRpcAuthState === "authorizing"
+      ? "Approve private session first"
+      : !anqa.privateRpcReady
+        ? "Private session unavailable"
+        : wallet <= 0
+          ? "No USDC in your wallet"
+          : "Deposit";
   const ctx = () => ({
     acc: anqa.acc,
     marketId: anqa.marketId,
@@ -98,11 +109,21 @@ export function DepositModal({
   };
 
   const doDeposit = async () => {
+    if (depositInFlight.current) return;
     const base = anqa.programFor("base");
     const er = anqa.programFor("er");
     if (!n || !base || !owner || !MINT || !anqa.sessionKp) {
       return onDone("Enter an amount", true);
     }
+    if (!anqa.privateRpcReady) {
+      return onDone(
+        anqa.privateRpcAuthState === "authorizing"
+          ? "Approve the one-time private-session message first — no deposit has been submitted"
+          : "Private session is unavailable; reconnect the wallet and approve its one-time message",
+        true
+      );
+    }
+    depositInFlight.current = true;
     setBusy("Depositing");
     try {
       await fundMarket(base, er, ctx(), {
@@ -123,8 +144,19 @@ export function DepositModal({
       setAmount("");
       anqa.refresh();
     } catch (e: any) {
-      onDone(readableError(e), true);
+      const message = readableError(e);
+      if (/deposit landed|rollup credit is lagging/i.test(message)) {
+        // Custody succeeded. Presenting this as a failed deposit invites the
+        // trader to click again and transfer the same amount twice.
+        onDone("Deposit received. The private balance is updating — do not submit it again.");
+        setAmount("");
+        anqa.refresh();
+        onClose();
+      } else {
+        onDone(message, true);
+      }
     } finally {
+      depositInFlight.current = false;
       setBusy(null);
     }
   };
@@ -233,16 +265,16 @@ export function DepositModal({
             className="cta cta-primary w-full h-10 text-[13px]"
             disabled={
               !!busy ||
-              (mode === "deposit" ? !anqa.sessionKp || wallet <= 0 : account <= 0)
+              (mode === "deposit"
+                ? !anqa.sessionKp || wallet <= 0 || !anqa.privateRpcReady
+                : account <= 0)
             }
             onClick={mode === "deposit" ? doDeposit : doWithdraw}
           >
             {busy
               ? `${busy}…`
               : mode === "deposit"
-                ? wallet <= 0
-                  ? "No USDC in your wallet"
-                  : "Deposit"
+                ? depositLabel
                 : account <= 0
                   ? "Nothing to withdraw"
                   : "Withdraw"}

@@ -110,19 +110,42 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
   // book — the honest degradation rather than a blank screen.
   const { signMessage } = useWallet();
   const [erToken, setErToken] = useState<string | null>(null);
+  const [erAuthState, setErAuthState] = useState<
+    "anonymous" | "authorizing" | "ready" | "unavailable"
+  >("anonymous");
+  const authOwnerKey = wallet?.publicKey?.toBase58() ?? null;
+  const canSignMessage = !!signMessage;
+  const signMessageRef = useRef(signMessage);
+  useEffect(() => {
+    signMessageRef.current = signMessage;
+  }, [signMessage]);
   useEffect(() => {
     let stop = false;
-    if (!wallet?.publicKey) {
+    if (!authOwnerKey) {
       setErToken(null);
+      setErAuthState("anonymous");
       return;
     }
-    teeToken(ER_RPC, wallet.publicKey, signMessage)
-      .then((t) => !stop && setErToken(t))
-      .catch(() => !stop && setErToken(null));
+    setErAuthState("authorizing");
+    teeToken(ER_RPC, new PublicKey(authOwnerKey), signMessageRef.current)
+      .then((t) => {
+        if (stop) return;
+        setErToken(t);
+        setErAuthState(t ? "ready" : "unavailable");
+      })
+      .catch(() => {
+        if (stop) return;
+        setErToken(null);
+        setErAuthState("unavailable");
+      });
     return () => {
       stop = true;
     };
-  }, [wallet?.publicKey?.toBase58(), signMessage]);
+    // `signMessage` is intentionally read through a ref. Some adapters return
+    // a new function identity on every provider render; depending on it made
+    // this effect mint the same token repeatedly and reopened the wallet after
+    // every approval.
+  }, [authOwnerKey, canSignMessage]);
 
   const conns = useMemo(
     () => ({
@@ -440,6 +463,9 @@ export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
     programForTrading,
     tradeExtra,
     sessionTradeExtra,
+    privateRpcReady:
+      !ER_RPC.split("?")[0].includes("-tee.") || erAuthState === "ready",
+    privateRpcAuthState: erAuthState,
   };
 }
 
