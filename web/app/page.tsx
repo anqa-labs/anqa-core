@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LandingMotion } from "@/components/LandingMotion";
+import { PrivacyDemo } from "@/components/PrivacyDemo";
 import { PhoenixMark, Wordmark } from "@/components/Wordmark";
 
 export const metadata: Metadata = {
@@ -124,6 +125,7 @@ export default function LandingPage() {
 
         <ProofStrip />
         <MarketTape />
+        <InteractiveDemoSection />
 
         <section id="privacy" className="border-b border-line-soft">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
@@ -217,6 +219,8 @@ export default function LandingPage() {
           </div>
         </section>
 
+        <TryAnqaSection />
+
         <section id="features" className="border-b border-line-soft">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
             <div data-reveal className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
@@ -255,6 +259,8 @@ export default function LandingPage() {
           </div>
         </section>
 
+        <ComparisonSection />
+
         <section className="relative overflow-hidden">
           <div className="landing-grid absolute inset-0 opacity-45" aria-hidden="true" />
           <div className="landing-glow pointer-events-none absolute left-1/2 top-[-500px] h-[760px] w-[960px] -translate-x-1/2 rounded-full opacity-70" />
@@ -264,7 +270,8 @@ export default function LandingPage() {
               Known by name, unseen by eye
             </p>
             <h2 className="mt-5 text-4xl font-medium leading-[1.03] tracking-[-0.045em] text-bright md:text-6xl">
-              Enter the private market.
+              Place your first private order
+              <br className="hidden sm:block" /> in under 30 seconds.
             </h2>
             <p className="mt-6 max-w-[560px] text-[14px] leading-7 text-muted">
               Nine perpetual markets are live on devnet. Connect once, create a
@@ -279,12 +286,10 @@ export default function LandingPage() {
                 Launch Anqa <span className="transition-transform group-hover:translate-x-1">→</span>
               </Link>
               <a
-                href="https://github.com/anqa-labs/anqa-core"
-                target="_blank"
-                rel="noreferrer"
+                href="#demo"
                 className="flex h-12 items-center rounded-lg border border-line bg-ink/80 px-6 text-[13px] text-text transition-colors hover:border-phoenix-soft hover:text-bright"
               >
-                View source ↗
+                Run interactive demo ↑
               </a>
             </div>
           </div>
@@ -292,6 +297,196 @@ export default function LandingPage() {
       </main>
 
       <LandingFooter />
+    </div>
+  );
+}
+
+function InteractiveDemoSection() {
+  return (
+    <section id="demo" className="relative isolate overflow-hidden border-b border-line-soft">
+      <div className="landing-grid absolute inset-0 -z-10 opacity-30" aria-hidden="true" />
+      <div data-parallax="0.06" className="landing-section-orb -left-52 top-24" aria-hidden="true" />
+      <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
+        <div data-reveal className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+          <div>
+            <SectionLabel>See the privacy difference</SectionLabel>
+            <h2 className="mt-5 max-w-[760px] text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
+              One order. Two very different
+              <br className="hidden md:block" /> information footprints.
+            </h2>
+          </div>
+          <p className="max-w-[390px] text-[12px] leading-6 text-muted">
+            Run the lifecycle yourself. A hidden order remains available to the
+            private matcher without publishing its price or size to the ladder.
+          </p>
+        </div>
+
+        <div data-reveal className="mt-12">
+          <PrivacyDemo />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const START_STEPS = [
+  {
+    number: "01",
+    title: "Connect your wallet",
+    body: "Connect on Solana devnet and deposit test USDC into the program-controlled vault.",
+  },
+  {
+    number: "02",
+    title: "Approve one session",
+    body: "Create a scoped, expiring trading key. Your wallet keeps custody authority.",
+  },
+  {
+    number: "03",
+    title: "Trade without popups",
+    body: "Place, cancel and close at terminal speed. Use Hidden when the order should stay off the public ladder.",
+  },
+] as const;
+
+function TryAnqaSection() {
+  return (
+    <section id="start" className="border-b border-line-soft bg-ink/35">
+      <div className="mx-auto grid max-w-[1280px] gap-16 px-5 py-24 md:px-8 md:py-32 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+        <div>
+          <div data-reveal>
+            <SectionLabel>From wallet to first order</SectionLabel>
+            <h2 className="mt-5 max-w-[650px] text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
+              Three steps. One wallet approval.
+            </h2>
+          </div>
+
+          <div className="reveal-grid mt-12 space-y-2">
+            {START_STEPS.map((step) => (
+              <div data-reveal key={step.number} className="group grid gap-4 rounded-xl border border-line-soft bg-void/45 p-5 transition-colors hover:border-phoenix-soft sm:grid-cols-[48px_1fr] sm:p-6">
+                <span className="tnum text-[10px] font-semibold text-phoenix">{step.number}</span>
+                <div>
+                  <h3 className="text-[16px] font-medium text-bright">{step.title}</h3>
+                  <p className="mt-2 max-w-[540px] text-[11px] leading-6 text-muted">{step.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div data-reveal className="landing-devnet-card relative overflow-hidden rounded-2xl border border-phoenix-soft bg-surface p-6 md:p-8">
+          <div className="absolute inset-0 veil opacity-[0.08]" aria-hidden="true" />
+          <div className="relative flex items-center justify-between border-b border-line-soft pb-5">
+            <div>
+              <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-phoenix">Protocol status</p>
+              <h3 className="mt-2 text-xl font-medium text-bright">Anqa devnet</h3>
+            </div>
+            <span className="flex items-center gap-2 rounded-full border border-bid/30 bg-bid/5 px-3 py-1.5 text-[9px] font-medium text-bid">
+              <span className="live-dot h-1.5 w-1.5 rounded-full bg-bid" /> Live
+            </span>
+          </div>
+
+          <div className="relative mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line-soft bg-line-soft">
+            <StatusMetric value="9" label="perp markets" />
+            <StatusMetric value="PER" label="private execution" />
+            <StatusMetric value="1-click" label="session trading" />
+            <StatusMetric value="Open" label="source code" />
+          </div>
+
+          <div className="relative mt-6 space-y-3 text-[10px] text-muted">
+            <TrustLine label="Order and portfolio reads" value="Permissioned" />
+            <TrustLine label="Fill tape and shown depth" value="Public" />
+            <TrustLine label="Collateral custody" value="Solana program" />
+          </div>
+
+          <Link href="/trade" className="relative mt-7 flex h-11 items-center justify-center rounded-lg bg-phoenix text-[11px] font-semibold text-void hover:brightness-110">
+            Start on devnet →
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const COMPARISON_ROWS = [
+  ["Orders visible before fill", "Yes", "No", "No"],
+  ["Privacy mechanism", "None", "Permissioned TEE execution", "Cryptographic"],
+  ["Matcher sees plaintext", "Yes", "Yes, inside the boundary", "Design-dependent"],
+  ["Execution path", "Public consensus", "Private ephemeral rollup", "MPC / proof network"],
+  ["Public market evidence", "Book + fills", "Shown depth + fills", "Design-dependent"],
+] as const;
+
+function ComparisonSection() {
+  return (
+    <section id="compare" className="border-b border-line-soft bg-ink/35">
+      <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
+        <div data-reveal className="mx-auto max-w-[760px] text-center">
+          <SectionLabel>An honest comparison</SectionLabel>
+          <h2 className="mt-5 text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-bright md:text-5xl">
+            Know exactly what Anqa protects.
+          </h2>
+          <p className="mx-auto mt-6 max-w-[650px] text-[12px] leading-6 text-muted">
+            Anqa is not encrypted or zero-knowledge matching. It combines
+            permissioned reads with attested private execution to prevent public
+            order-flow leakage while retaining a fast, familiar CLOB.
+          </p>
+        </div>
+
+        <div data-reveal className="mt-12 overflow-x-auto rounded-2xl border border-line-soft">
+          <table className="w-full min-w-[760px] border-collapse text-left">
+            <thead className="bg-void/80 text-[9px] uppercase tracking-[0.14em] text-dim">
+              <tr>
+                <th className="px-5 py-4 font-medium">Model</th>
+                <th className="px-5 py-4 font-medium">Public CLOB</th>
+                <th className="border-x border-phoenix-soft bg-phoenix/5 px-5 py-4 font-semibold text-phoenix">Anqa</th>
+                <th className="px-5 py-4 font-medium">Encrypted / ZK venue</th>
+              </tr>
+            </thead>
+            <tbody className="bg-ink text-[11px]">
+              {COMPARISON_ROWS.map(([label, publicValue, anqaValue, cryptoValue]) => (
+                <tr key={label} className="border-t border-line-soft">
+                  <th className="px-5 py-4 font-medium text-text">{label}</th>
+                  <td className="px-5 py-4 text-muted">{publicValue}</td>
+                  <td className="border-x border-phoenix-soft bg-phoenix/[0.025] px-5 py-4 font-medium text-bright">{anqaValue}</td>
+                  <td className="px-5 py-4 text-muted">{cryptoValue}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div data-reveal className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+          <div className="flex flex-col gap-4 rounded-xl border border-line-soft bg-ink p-5 sm:flex-row sm:items-center">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-phoenix-soft bg-phoenix/5 text-phoenix">
+              <PhoenixMark className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-[11px] font-medium text-bright">Built with MagicBlock Private Ephemeral Rollups</p>
+              <p className="mt-1 text-[9px] leading-5 text-dim">Open-source hackathon build · Solana devnet · Percolator risk engine</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-line-soft bg-ink p-3">
+            <Link href="/docs" className="rounded-lg px-4 py-3 text-[10px] font-medium text-phoenix hover:bg-phoenix/5">Read privacy model →</Link>
+            <a href="https://github.com/anqa-labs/anqa-core" target="_blank" rel="noreferrer" className="rounded-lg px-4 py-3 text-[10px] font-medium text-text hover:bg-surface">Inspect source ↗</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StatusMetric({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="bg-ink p-4">
+      <p className="tnum text-[16px] font-medium text-bright">{value}</p>
+      <p className="mt-1 text-[8px] uppercase tracking-[0.12em] text-dim">{label}</p>
+    </div>
+  );
+}
+
+function TrustLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between border-b border-line-soft pb-3">
+      <span>{label}</span>
+      <span className="text-text">{value}</span>
     </div>
   );
 }
@@ -304,6 +499,9 @@ function LandingNav() {
           <Wordmark />
         </Link>
         <nav className="ml-auto hidden items-center gap-1 md:flex">
+          <a href="#demo" className="rounded-md px-3 py-2 text-[11px] text-muted hover:text-bright">
+            Demo
+          </a>
           <a href="#privacy" className="rounded-md px-3 py-2 text-[11px] text-muted hover:text-bright">
             Privacy
           </a>
