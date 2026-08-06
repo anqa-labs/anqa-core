@@ -78,6 +78,46 @@ export function LandingMotion() {
       });
     });
 
+    const cleanupSpotlights: Array<() => void> = [];
+    document.querySelectorAll<HTMLElement>("[data-spotlight]").forEach((item) => {
+      const onPointerMove = (event: PointerEvent) => {
+        const rect = item.getBoundingClientRect();
+        item.style.setProperty("--spotlight-x", `${event.clientX - rect.left}px`);
+        item.style.setProperty("--spotlight-y", `${event.clientY - rect.top}px`);
+        item.classList.add("is-spotlit");
+      };
+      const onPointerLeave = () => item.classList.remove("is-spotlit");
+
+      item.addEventListener("pointermove", onPointerMove);
+      item.addEventListener("pointerleave", onPointerLeave);
+      cleanupSpotlights.push(() => {
+        item.removeEventListener("pointermove", onPointerMove);
+        item.removeEventListener("pointerleave", onPointerLeave);
+      });
+    });
+
+    const cleanupMagnetic: Array<() => void> = [];
+    document.querySelectorAll<HTMLElement>("[data-magnetic]").forEach((item) => {
+      const onPointerMove = (event: PointerEvent) => {
+        const rect = item.getBoundingClientRect();
+        const x = event.clientX - (rect.left + rect.width / 2);
+        const y = event.clientY - (rect.top + rect.height / 2);
+        item.style.setProperty("--magnetic-x", `${x * 0.12}px`);
+        item.style.setProperty("--magnetic-y", `${y * 0.18}px`);
+      };
+      const onPointerLeave = () => {
+        item.style.setProperty("--magnetic-x", "0px");
+        item.style.setProperty("--magnetic-y", "0px");
+      };
+
+      item.addEventListener("pointermove", onPointerMove);
+      item.addEventListener("pointerleave", onPointerLeave);
+      cleanupMagnetic.push(() => {
+        item.removeEventListener("pointermove", onPointerMove);
+        item.removeEventListener("pointerleave", onPointerLeave);
+      });
+    });
+
     const hero = document.querySelector<HTMLElement>("[data-hero]");
     const pointerGlow = document.querySelector<HTMLElement>("[data-pointer-glow]");
     const onHeroPointerMove = (event: PointerEvent) => {
@@ -98,6 +138,8 @@ export function LandingMotion() {
       window.removeEventListener("resize", requestScrollUpdate);
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
       cleanupTilt.forEach((cleanup) => cleanup());
+      cleanupSpotlights.forEach((cleanup) => cleanup());
+      cleanupMagnetic.forEach((cleanup) => cleanup());
       hero?.removeEventListener("pointermove", onHeroPointerMove);
       hero?.removeEventListener("pointerleave", onHeroPointerLeave);
     };

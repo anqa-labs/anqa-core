@@ -319,9 +319,14 @@ body {
 }
 .landing-terminal {
   overflow: hidden;
+  animation: landing-terminal-float 6s ease-in-out infinite;
   box-shadow:
     0 36px 90px -36px rgba(0, 0, 0, 0.92),
     0 0 0 1px color-mix(in oklab, var(--color-phoenix) 4%, transparent) inset;
+}
+@keyframes landing-terminal-float {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -7px; }
 }
 .landing-terminal::before {
   content: "";
@@ -381,7 +386,67 @@ body {
 }
 .landing-book-bar {
   transform-origin: right center;
-  animation: landing-book-bar 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation:
+    landing-book-bar 700ms cubic-bezier(0.16, 1, 0.3, 1) backwards,
+    landing-depth-breathe 3.8s ease-in-out infinite;
+}
+@keyframes landing-depth-breathe {
+  0%, 100% { opacity: 0.68; }
+  50% { opacity: 1; }
+}
+
+.landing-edge {
+  position: relative;
+  display: inline-block;
+  background: linear-gradient(
+    100deg,
+    var(--color-phoenix) 0%,
+    var(--color-phoenix) 38%,
+    var(--color-bright) 50%,
+    var(--color-phoenix) 62%,
+    var(--color-phoenix) 100%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: landing-edge-shimmer 4.8s ease-in-out 1.1s infinite;
+}
+.landing-edge::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -0.08em;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-phoenix), transparent);
+  opacity: 0.4;
+  transform: scaleX(0.35);
+  animation: landing-edge-line 3.4s ease-in-out infinite;
+}
+@keyframes landing-edge-shimmer {
+  0%, 18% { background-position: 120% 0; }
+  60%, 100% { background-position: -120% 0; }
+}
+@keyframes landing-edge-line {
+  0%, 100% { opacity: 0.15; transform: scaleX(0.28); }
+  50% { opacity: 0.65; transform: scaleX(0.9); }
+}
+
+.landing-tape {
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, var(--color-void), transparent 12%, transparent 88%, var(--color-void)),
+    color-mix(in oklab, var(--color-ink) 72%, transparent);
+}
+.landing-tape-track {
+  display: flex;
+  width: max-content;
+  animation: landing-tape 28s linear infinite;
+}
+.landing-tape:hover .landing-tape-track { animation-play-state: paused; }
+@keyframes landing-tape {
+  to { transform: translateX(-50%); }
 }
 
 /* The homepage is still server-rendered. This small motion layer only sets
@@ -423,6 +488,22 @@ body {
 .reveal-grid > [data-reveal]:nth-child(6) { transition-delay: 350ms; }
 
 .landing-parallax {
+  transform: translate3d(0, var(--parallax-y, 0), 0);
+  will-change: transform;
+}
+.landing-section-orb {
+  position: absolute;
+  z-index: -1;
+  width: 520px;
+  height: 520px;
+  border-radius: 999px;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--color-phoenix) 8%, transparent),
+    transparent 68%
+  );
+  filter: blur(10px);
   transform: translate3d(0, var(--parallax-y, 0), 0);
   will-change: transform;
 }
@@ -524,11 +605,88 @@ body {
     transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 300ms ease;
 }
+.landing-feature-card {
+  position: relative;
+  overflow: hidden;
+}
+.landing-feature-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    320px circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%),
+    color-mix(in oklab, var(--color-phoenix) 10%, transparent),
+    transparent 68%
+  );
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+.landing-feature-card.is-spotlit::before { opacity: 1; }
+.landing-feature-card > * { position: relative; z-index: 1; }
 .landing-feature-card:hover,
 .landing-architecture-card:hover {
   transform: translateY(-5px);
   border-color: color-mix(in oklab, var(--color-phoenix) 25%, var(--color-line));
   box-shadow: 0 22px 56px -36px rgba(0, 0, 0, 0.9);
+}
+
+.landing-magnetic {
+  transform: translate3d(var(--magnetic-x, 0), var(--magnetic-y, 0), 0);
+  transition:
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+  will-change: transform;
+}
+
+@media (min-width: 1024px) {
+  .landing-architecture-flow::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    top: 50%;
+    right: 16%;
+    left: 16%;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklab, var(--color-phoenix) 36%, transparent),
+      var(--color-bid),
+      color-mix(in oklab, var(--color-phoenix) 36%, transparent),
+      transparent
+    );
+    background-size: 220% 100%;
+    animation: landing-flow-line 3.6s linear infinite;
+  }
+  .landing-architecture-step {
+    position: relative;
+    z-index: 1;
+  }
+  .landing-architecture-step::after {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    right: -8px;
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--color-phoenix);
+    box-shadow: 0 0 15px var(--color-phoenix);
+    animation: landing-flow-node 2s ease-in-out infinite;
+  }
+  .landing-architecture-step:nth-child(2)::after { animation-delay: 600ms; }
+  .landing-architecture-step:last-child::after { display: none; }
+}
+@keyframes landing-flow-line {
+  to { background-position: -220% 0; }
+}
+@keyframes landing-flow-node {
+  0%, 100% { opacity: 0.25; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1.4); }
 }
 
 /* Toasts slide in like a print and see themselves out. */
@@ -633,7 +791,13 @@ body {
     animation: none;
   }
   .landing-terminal::after,
-  .landing-orbit {
+  .landing-orbit,
+  .landing-terminal,
+  .landing-edge,
+  .landing-edge::after,
+  .landing-tape-track,
+  .landing-architecture-flow::before,
+  .landing-architecture-step::after {
     animation: none;
   }
   [data-reveal] {
@@ -643,7 +807,9 @@ body {
     transition: none;
   }
   .landing-parallax,
-  .landing-tilt {
+  .landing-tilt,
+  .landing-section-orb,
+  .landing-magnetic {
     transform: none;
   }
   .landing-feature-card,

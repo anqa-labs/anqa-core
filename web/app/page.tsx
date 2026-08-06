@@ -82,7 +82,7 @@ export default function LandingPage() {
                 Trade without
                 <br />
                 broadcasting
-                <span className="text-phoenix"> your edge.</span>
+                <span className="landing-edge text-phoenix"> your edge.</span>
               </h1>
               <p className="landing-reveal landing-delay-2 mt-7 max-w-[590px] text-[16px] leading-7 text-muted md:text-[18px] md:leading-8">
                 Anqa is a privacy-preserving perpetual futures exchange with a
@@ -93,14 +93,16 @@ export default function LandingPage() {
               <div className="landing-reveal landing-delay-3 mt-9 flex flex-wrap items-center gap-3">
                 <Link
                   href="/trade"
-                  className="group flex h-12 items-center gap-3 rounded-lg bg-phoenix px-5 text-[13px] font-semibold text-void transition-[filter,transform] hover:-translate-y-0.5 hover:brightness-110"
+                  data-magnetic
+                  className="landing-magnetic group flex h-12 items-center gap-3 rounded-lg bg-phoenix px-5 text-[13px] font-semibold text-void transition-[filter,transform] hover:brightness-110"
                 >
                   Launch terminal
                   <span className="transition-transform group-hover:translate-x-1">→</span>
                 </Link>
                 <Link
                   href="/docs"
-                  className="flex h-12 items-center rounded-lg border border-line bg-ink/70 px-5 text-[13px] font-medium text-text backdrop-blur-sm transition-colors hover:border-phoenix-soft hover:text-bright"
+                  data-magnetic
+                  className="landing-magnetic flex h-12 items-center rounded-lg border border-line bg-ink/70 px-5 text-[13px] font-medium text-text backdrop-blur-sm transition-colors hover:border-phoenix-soft hover:text-bright"
                 >
                   Read the protocol
                 </Link>
@@ -121,6 +123,7 @@ export default function LandingPage() {
         </section>
 
         <ProofStrip />
+        <MarketTape />
 
         <section id="privacy" className="border-b border-line-soft">
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
@@ -164,7 +167,8 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="architecture" className="relative border-b border-line-soft bg-ink/35">
+        <section id="architecture" className="relative isolate overflow-hidden border-b border-line-soft bg-ink/35">
+          <div data-parallax="0.08" className="landing-section-orb -right-40 top-36" aria-hidden="true" />
           <div className="mx-auto max-w-[1280px] px-5 py-24 md:px-8 md:py-32">
             <div data-reveal className="mx-auto max-w-[760px] text-center">
               <SectionLabel>Protocol architecture</SectionLabel>
@@ -180,8 +184,8 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="reveal-grid mt-16 grid gap-3 lg:grid-cols-3">
-              <div data-reveal>
+            <div className="landing-architecture-flow reveal-grid relative mt-16 grid gap-3 lg:grid-cols-3">
+              <div data-reveal className="landing-architecture-step">
                 <ArchitectureCard
                   number="01"
                   eyebrow="Trader"
@@ -190,7 +194,7 @@ export default function LandingPage() {
                   tags={["Session key", "Owner view", "1-click"]}
                 />
               </div>
-              <div data-reveal>
+              <div data-reveal className="landing-architecture-step">
                 <ArchitectureCard
                   number="02"
                   eyebrow="MagicBlock PER"
@@ -200,7 +204,7 @@ export default function LandingPage() {
                   featured
                 />
               </div>
-              <div data-reveal>
+              <div data-reveal className="landing-architecture-step">
                 <ArchitectureCard
                   number="03"
                   eyebrow="Solana"
@@ -232,7 +236,7 @@ export default function LandingPage() {
 
             <div className="reveal-grid mt-14 grid gap-px overflow-hidden rounded-2xl border border-line-soft bg-line-soft md:grid-cols-2 lg:grid-cols-3">
               {FEATURES.map((feature) => (
-                <article data-reveal key={feature.index} className="landing-feature-card group bg-ink p-7 transition-colors hover:bg-surface md:p-8">
+                <article data-reveal data-spotlight key={feature.index} className="landing-feature-card group bg-ink p-7 transition-colors hover:bg-surface md:p-8">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-phoenix">
                       {feature.eyebrow}
@@ -269,7 +273,8 @@ export default function LandingPage() {
             <div className="mt-9 flex flex-wrap justify-center gap-3">
               <Link
                 href="/trade"
-                className="group flex h-12 items-center gap-3 rounded-lg bg-phoenix px-6 text-[13px] font-semibold text-void transition-[filter,transform] hover:-translate-y-0.5 hover:brightness-110"
+                data-magnetic
+                className="landing-magnetic group flex h-12 items-center gap-3 rounded-lg bg-phoenix px-6 text-[13px] font-semibold text-void transition-[filter,transform] hover:brightness-110"
               >
                 Launch Anqa <span className="transition-transform group-hover:translate-x-1">→</span>
               </Link>
@@ -448,6 +453,35 @@ function ProofStrip() {
         <MiniProof value="100%" label="open source" />
       </div>
     </section>
+  );
+}
+
+const TAPE_ITEMS = [
+  "Dark CLOB",
+  "Hidden orders",
+  "Price-time priority",
+  "Session execution",
+  "Private portfolios",
+  "Public fills",
+  "Solana custody",
+] as const;
+
+function MarketTape() {
+  return (
+    <div className="landing-tape border-b border-line-soft" aria-label="Anqa protocol capabilities">
+      <div className="landing-tape-track py-3.5">
+        {[0, 1].map((copy) => (
+          <div key={copy} className="flex shrink-0 items-center" aria-hidden={copy === 1}>
+            {TAPE_ITEMS.map((item) => (
+              <span key={item} className="flex shrink-0 items-center gap-6 px-6 text-[9px] font-semibold uppercase tracking-[0.18em] text-dim md:px-9">
+                <span className="h-1 w-1 rounded-full bg-phoenix" />
+                {item}
+              </span>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
