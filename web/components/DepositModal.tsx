@@ -111,8 +111,12 @@ export function DepositModal({
   const doDeposit = async () => {
     if (depositInFlight.current) return;
     const base = anqa.programFor("base");
-    const er = anqa.programFor("er");
-    if (!n || !base || !owner || !MINT || !anqa.sessionKp) {
+    // The base setup is owner-signed once; every rollup claim after that must
+    // be signed by the browser session. Passing the wallet-backed ER program
+    // here made each credit poll reopen Backpack even though the deposit had
+    // already landed on Solana.
+    const session = anqa.sessionProgram();
+    if (!n || !base || !owner || !MINT || !anqa.sessionKp || !session) {
       return onDone("Enter an amount", true);
     }
     if (!anqa.privateRpcReady) {
@@ -126,7 +130,7 @@ export function DepositModal({
     depositInFlight.current = true;
     setBusy("Depositing");
     try {
-      await fundMarket(base, er, ctx(), {
+      await fundMarket(base, session, ctx(), {
         usd: account + n,
         mint: MINT,
         hideAccount: true,

@@ -341,7 +341,10 @@ export function TradeForm({
       if (needOpen || needDelegate || needGrant) {
         await fundMarket(
           base,
-          anqa.programFor("er"),
+          // Funding setup is wallet-authorized once, but deposit claims are
+          // trade-scoped rollup actions. Use the session signer so a lagging
+          // credit can never turn into repeated wallet approval popups.
+          session,
           {
             acc: anqa.acc,
             marketId: anqa.marketId,
