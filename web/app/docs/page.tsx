@@ -128,7 +128,7 @@ export default function DocsPage() {
     <div className="min-h-dvh bg-void text-text">
       <header className="sticky top-0 z-40 h-14 border-b border-line-soft bg-void/90 backdrop-blur-xl">
         <div className="mx-auto flex h-full max-w-[1440px] items-center gap-5 px-4 md:px-6">
-          <Link href="/" aria-label="Anqa terminal">
+          <Link href="/" aria-label="Anqa home">
             <Wordmark />
           </Link>
           <span className="hidden h-5 w-px bg-line md:block" />
@@ -145,7 +145,7 @@ export default function DocsPage() {
               Source ↗
             </a>
             <Link
-              href="/"
+              href="/trade"
               className="flex h-8 items-center rounded-md bg-phoenix px-3 text-[11px] font-semibold text-void transition-[filter] hover:brightness-110"
             >
               Open terminal
@@ -213,7 +213,7 @@ export default function DocsPage() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/"
+                href="/trade"
                 className="rounded-lg bg-phoenix px-4 py-2.5 text-[12px] font-semibold text-void hover:brightness-110"
               >
                 Trade on devnet
@@ -1118,7 +1118,7 @@ export default function DocsPage() {
               Anqa devnet documentation · Private execution, public evidence.
             </p>
             <div className="flex gap-4 sm:ml-auto">
-              <Link href="/" className="text-muted hover:text-bright">
+              <Link href="/trade" className="text-muted hover:text-bright">
                 Terminal
               </Link>
               <a

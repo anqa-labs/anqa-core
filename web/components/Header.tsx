@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { Wordmark } from "./Wordmark";
 import { readKernel, equity } from "@/lib/portfolio";
 import { useAllPositions } from "@/lib/useAllPositions";
@@ -10,8 +11,6 @@ const WalletButton = dynamic(
   async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
   { ssr: false }
 );
-
-const NAV = ["Trade", "Portfolio", "Docs"] as const;
 
 export function Header({ anqa, onDeposit }: { anqa: Anqa; onDeposit: () => void }) {
   // The trader's free balance — total equity minus the collateral already
@@ -24,31 +23,26 @@ export function Header({ anqa, onDeposit }: { anqa: Anqa; onDeposit: () => void 
   const balance = Math.max(0, equityUsd - committed);
   return (
     <header className="shrink-0 flex items-center gap-6 h-14 px-4 border-b border-line-soft bg-ink">
-      <Wordmark />
+      <Link href="/" aria-label="Anqa home">
+        <Wordmark />
+      </Link>
 
       <nav className="hidden md:flex items-center gap-0.5">
-        {NAV.map((item, i) =>
-          item === "Docs" ? (
-            <a
-              key={item}
-              href="/docs"
-              className="relative h-8 px-3 grid place-items-center text-[13px] rounded-md text-dim hover:text-text transition-colors"
-            >
-              {item}
-            </a>
-          ) : (
-            <span
-              key={item}
-              className={`relative h-8 px-3 grid place-items-center text-[13px] rounded-md transition-colors ${
-                i === 0
-                  ? "text-bright after:absolute after:left-3 after:right-3 after:-bottom-[13px] after:h-[2px] after:rounded-full after:bg-phoenix"
-                  : "text-dim hover:text-text cursor-default"
-              }`}
-            >
-              {item}
-            </span>
-          )
-        )}
+        <Link
+          href="/trade"
+          className="relative grid h-8 place-items-center rounded-md px-3 text-[13px] text-bright after:absolute after:-bottom-[13px] after:left-3 after:right-3 after:h-[2px] after:rounded-full after:bg-phoenix"
+        >
+          Trade
+        </Link>
+        <span className="relative grid h-8 cursor-default place-items-center rounded-md px-3 text-[13px] text-dim">
+          Portfolio
+        </span>
+        <Link
+          href="/docs"
+          className="relative grid h-8 place-items-center rounded-md px-3 text-[13px] text-dim transition-colors hover:text-text"
+        >
+          Docs
+        </Link>
       </nav>
 
       <p className="hidden xl:block ml-auto text-[11px] text-dim italic">
