@@ -345,7 +345,7 @@ export function BottomTabs({
                     "Side",
                     "Size",
                     "Entry",
-                    "Unrealised",
+                    "Unrealised (mark)",
                     "Liq. price",
                     "Margin",
                     "",
@@ -938,8 +938,12 @@ function PendingPositionRow({
   );
 }
 
-/** One position, live: streams its market's index price for tick-by-tick
- *  PnL and closes directly — the global session signs for any market. */
+/** One position, marked with the protocol's accepted oracle price.
+ *
+ * The terminal also streams a faster index price, but using that here made the
+ * PnL disagree with the MARK displayed in the market bar. Risk, liquidation
+ * and settlement all speak in the accepted mark, so the position row does too.
+ */
 function PositionRow({
   row,
   busy,
@@ -953,15 +957,8 @@ function PositionRow({
   onClose: () => void;
   onGoto: () => void;
 }) {
-  const live = usePythLive(row.market.pythFeedId);
-  const price = live ?? row.mark;
-  const pnlRaw =
-    row.entry === null || price === null
-      ? 0
-      : (row.isLong ? price - row.entry : row.entry - price) * row.size;
-  // The stream ticks several times a second; glide between values so the
-  // number reads as living rather than stuttering.
-  const pnl = useTweened(pnlRaw, 350) ?? 0;
+  // `row.pnl` is derived from the same accepted mark shown in MarketBar.
+  const pnl = useTweened(row.pnl, 350) ?? 0;
   const roe = row.legMarginUsd > 0 ? (pnl / row.legMarginUsd) * 100 : 0;
   const tone = pnl > 0 ? "text-bid" : pnl < 0 ? "text-ask" : "text-muted";
   return (
@@ -992,7 +989,16 @@ function PositionRow({
           ? "—"
           : row.entry.toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </span>
-      <span className={`tnum ${tone}`}>
+      <span
+        className={`tnum ${tone}`}
+        title={
+          row.mark === null
+            ? "Waiting for the protocol mark"
+            : `PnL at protocol mark ${row.mark.toLocaleString(undefined, {
+                maximumFractionDigits: 8,
+              })}`
+        }
+      >
         {pnl < 0 ? "−" : "+"}$
         {Math.abs(pnl).toLocaleString(undefined, {
           minimumFractionDigits: 2,
