@@ -1,11 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Connection } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import { Panel } from "./ui";
 import { ER_RPC, shortKey } from "@/lib/anqa";
 import { migrateToPrivate } from "@/lib/margin";
 import type { Anqa } from "@/lib/useAnqa";
+
+// A purpose-built "attacker" program, deployed to devnet, that reads whatever
+// account it is handed — the concrete form of "run your own code to CPI-read
+// the private account". Source: programs/anqa-reader. We use it below to show
+// that reading is not the boundary: admission is.
+const READER_PROGRAM = new PublicKey(
+  "Are1Rg5BRvuzxFYHCFZkFoGAiaXF78Rhd5i8MNxJBzPv"
+);
 
 // "exposed" and "dormant" both mean the anonymous read returned data, but they
 // are opposite verdicts and must never be shown as one. A *delegated* account
@@ -144,6 +158,8 @@ export function ProofPanel({ anqa }: { anqa: Anqa }) {
           </div>
         ))}
       </div>
+
+      <CodeReachSection isTee={isTee} book={anqa.acc.book} tape={anqa.acc.tape} />
 
       <EnclaveSection isTee={isTee} />
 
@@ -289,6 +305,183 @@ function EnclaveSection({ isTee }: { isTee: boolean }) {
           {isTee ? "." : ", which is expected: it is not an enclave."}
         </p>
       )}
+    </div>
+  );
+}
+
+type Reach = "pending" | "refused" | "reached" | "error";
+
+/**
+ * The objection this panel exists to answer out loud.
+ *
+ * "A stranger reads `null`" only closes the read path. The sharper question is:
+ * what stops someone running their OWN program that CPI-reads the account and
+ * copies the bytes into one they can read? On Solana any executing program may
+ * read any account in its instruction's account list — so if arbitrary code
+ * could execute against a private account, the null above would be a facade.
+ *
+ * It cannot. This asks the TEE, as an anonymous stranger, to run a real
+ * attacker program (`READER_PROGRAM`, deployed to devnet) against the private
+ * book. The rollup refuses the transaction with a 403 at ingress — before it
+ * executes — because the caller cannot prove membership. The identical call
+ * against the public tape is admitted, so the refusal is privacy-specific, not
+ * a generic failure. Reading was never the boundary; admission is.
+ */
+function CodeReachSection({
+  isTee,
+  book,
+  tape,
+}: {
+  isTee: boolean;
+  book: PublicKey;
+  tape: PublicKey;
+}) {
+  const [bookReach, setBookReach] = useState<Reach>("pending");
+  const [tapeReach, setTapeReach] = useState<Reach>("pending");
+  const [running, setRunning] = useState(false);
+  const url = useMemo(() => ER_RPC.split("?")[0], []);
+
+  // Simulate `READER_PROGRAM(target)` as an anonymous stranger and classify the
+  // reply: a 403 (or an access-denied body) is an ingress refusal; program logs
+  // mean it executed and reached the bytes.
+  const probe = useCallback(
+    async (target: PublicKey): Promise<Reach> => {
+      try {
+        const conn = new Connection(url, "confirmed");
+        const stranger = Keypair.generate(); // random, non-member, unfunded
+        const { blockhash } = await conn.getLatestBlockhash();
+        const tx = new Transaction().add(
+          new TransactionInstruction({
+            programId: READER_PROGRAM,
+            keys: [{ pubkey: target, isSigner: false, isWritable: false }],
+            data: Buffer.from([]),
+          })
+        );
+        tx.feePayer = stranger.publicKey;
+        tx.recentBlockhash = blockhash;
+        const b64 = tx
+          .serialize({ requireAllSignatures: false, verifySignatures: false })
+          .toString("base64");
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "simulateTransaction",
+            params: [
+              b64,
+              { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true },
+            ],
+          }),
+        });
+        if (res.status === 403) return "refused";
+        const body = await res.json().catch(() => null);
+        if (body?.error && /denied|forbidden/i.test(JSON.stringify(body.error)))
+          return "refused";
+        // Program logs in the reply mean the code ran and touched the account.
+        if (Array.isArray(body?.result?.value?.logs)) return "reached";
+        return body?.error ? "error" : "reached";
+      } catch (e) {
+        // web3/fetch may surface the ingress 403 as a thrown error.
+        return /403|denied|forbidden/i.test(String((e as Error).message))
+          ? "refused"
+          : "error";
+      }
+    },
+    [url]
+  );
+
+  const run = useCallback(async () => {
+    setRunning(true);
+    setBookReach("pending");
+    setTapeReach("pending");
+    try {
+      setBookReach(await probe(book));
+      setTapeReach(await probe(tape));
+    } finally {
+      setRunning(false);
+    }
+  }, [probe, book, tape]);
+
+  useEffect(() => {
+    run();
+  }, [run]);
+
+  const reachMark = (r: Reach, privateTarget: boolean) => {
+    if (r === "pending") return <span className="text-[11px] text-dim">…</span>;
+    if (r === "error") return <span className="text-[11px] text-dim">unavailable</span>;
+    if (privateTarget)
+      return r === "refused" ? (
+        <span
+          className="text-[11px] text-bid"
+          title="The rollup refused the transaction at ingress, before it executed — the stranger's code never read a byte"
+        >
+          refused at ingress
+        </span>
+      ) : (
+        <span
+          className="text-[11px] text-ask"
+          title="The program executed against the private account — this would be a privacy failure"
+        >
+          reached
+        </span>
+      );
+    // public control
+    return r === "reached" ? (
+      <span
+        className="text-[11px] text-dim"
+        title="The same program runs fine here — the block above is privacy-specific, not a generic failure"
+      >
+        executes
+      </span>
+    ) : (
+      <span className="text-[11px] text-dim">{r === "refused" ? "refused" : "—"}</span>
+    );
+  };
+
+  return (
+    <div className="shrink-0 border-t border-line-soft">
+      <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+        <span className="text-[10px] uppercase tracking-wider text-dim">
+          and even code cannot reach it
+        </span>
+        <button
+          onClick={run}
+          disabled={running}
+          className="text-[10px] text-dim hover:text-text disabled:opacity-50"
+        >
+          {running ? "running…" : "run again"}
+        </button>
+      </div>
+
+      <div className="divide-y divide-line-soft">
+        <CheckRow
+          label="the book"
+          note="a stranger's program tries to read it"
+          right={reachMark(bookReach, true)}
+        />
+        <CheckRow
+          label="the tape"
+          note="same program, public account"
+          right={reachMark(tapeReach, false)}
+        />
+      </div>
+
+      <p className="px-3 pb-2 text-[10px] text-dim leading-relaxed">
+        {isTee ? (
+          <>
+            An arbitrary program, run by an anonymous stranger, is refused the
+            instant its transaction names a private account — before it executes.
+            Reading is not the boundary; admission is.
+          </>
+        ) : (
+          <>
+            The public rollup admits the call and the program executes — read
+            gating and ingress refusal turn on against a TEE validator.
+          </>
+        )}
+      </p>
     </div>
   );
 }
