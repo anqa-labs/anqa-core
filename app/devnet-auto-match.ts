@@ -27,6 +27,7 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  Transaction,
 } from "@solana/web3.js";
 import fs from "fs";
 import os from "os";
@@ -41,7 +42,10 @@ const GROUP_ID = new BN(process.env.ANQA_GROUP ?? "930");
 const MARKET_COUNT = Number(process.env.ANQA_MARKET_COUNT ?? 9);
 const MATCH_DELAY_MS = Number(process.env.ANQA_MATCH_DELAY_MS ?? 10_000);
 const SCAN_MS = Number(process.env.ANQA_MATCH_SCAN_MS ?? 1_000);
-const RETRY_MS = Number(process.env.ANQA_MATCH_RETRY_MS ?? 15_000);
+// A refused match is usually the risk engine mid-requote, which clears in a
+// tick — so back off briefly and try again rather than parking the order for
+// fifteen seconds while a demo is being recorded.
+const RETRY_MS = Number(process.env.ANQA_MATCH_RETRY_MS ?? 2_000);
 const NIL = 0xffff;
 
 type Side = "bid" | "ask";
@@ -147,13 +151,32 @@ async function main() {
       )
     )
   );
+  // The venue's quoting key. Defaults to the resident maker daemon's key so
+  // its ladder is recognised (and cleared/restored) as venue quotes; the
+  // legacy demo-maker file remains the fallback for older venues.
+  const makerKeyFile =
+    process.env.ANQA_VENUE_MAKER_KEYFILE ??
+    [`app/.mm-maker-${GROUP_ID.toString()}.json`, `app/.demo-maker-${GROUP_ID.toString()}.json`].find(
+      (p) => fs.existsSync(p)
+    );
+  if (!makerKeyFile) throw new Error("no venue maker keyfile found");
   const maker = Keypair.fromSecretKey(
-    Uint8Array.from(
-      JSON.parse(
-        fs.readFileSync(`app/.demo-maker-${GROUP_ID.toString()}.json`, "utf-8")
-      )
-    )
+    Uint8Array.from(JSON.parse(fs.readFileSync(makerKeyFile, "utf-8")))
   );
+  // Every key the venue itself quotes (or used to quote) with. Orders from
+  // these keys are never match targets — without this, a retired maker's
+  // stale ladder starves real user orders (older seqs are serviced first).
+  const venueKeys = [
+    `app/.mm-maker-${GROUP_ID.toString()}.json`,
+    `app/.demo-maker-${GROUP_ID.toString()}.json`,
+  ]
+    .filter((p) => fs.existsSync(p))
+    .map((p) =>
+      Keypair.fromSecretKey(
+        Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf-8")))
+      ).publicKey.toBase58()
+    );
+  const isVenue = (trader: any) => venueKeys.includes(new PublicKey(trader).toBase58());
   const idl = JSON.parse(fs.readFileSync("target/idl/anqa_core.json", "utf-8"));
   const keeperEr = new Connection(await teeRpcFor(keeper, ER_RPC), "processed");
   const makerEr = new Connection(await teeRpcFor(maker, ER_RPC), "processed");
@@ -239,70 +262,105 @@ async function main() {
       const queue = walk(target.side === "bid" ? bk.bids : bk.asks);
       const index = queue.findIndex((order) => sameOrder(order, target));
       if (index < 0) return false;
-      // Every order before the target must belong to the venue maker. A newly
-      // arrived user with better priority becomes the next candidate instead.
-      if (
-        queue
-          .slice(0, index)
-          .some((order) => !new PublicKey(order.trader).equals(maker.publicKey))
-      ) {
+      // Every order before the target must be one THIS process can cancel —
+      // i.e. owned by the key it signs with. A foreign venue key's rung (a
+      // retired maker still being respawned somewhere) is not clearable: the
+      // cancel would fail 6004 and the whole match would retry forever. Say so
+      // once and move on, rather than looping silently.
+      const blocker = queue
+        .slice(0, index)
+        .find((order) => !new PublicKey(order.trader).equals(maker.publicKey));
+      if (blocker) {
+        retryAfter.set(target.key, Date.now() + RETRY_MS);
+        log(
+          "blocked",
+          `${target.marketId} ${target.side}: ${short(
+            new PublicKey(blocker.trader)
+          )} rests ahead and is not this maker — stop the other maker`
+        );
         return false;
       }
 
-      for (const order of queue.slice(0, index)) {
+      // Clearing the venue rungs ahead and crossing the target must be ONE
+      // transaction. Sent separately, the resident maker's requote loop refills
+      // the gap within its tick, so the re-read never sees the user's order at
+      // the head and the match never fires — a user order could rest forever
+      // while the log said nothing at all. Atomicity makes the race impossible.
+      const ahead = queue.slice(0, index);
+      const ixs = [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+        // Refresh BEFORE the cancels, not after. A cancel releases margin
+        // through the risk engine, and the engine refuses (6010) when it is
+        // asked to do that against an account whose kernel state has drifted
+        // since the last touch — which is every requote tick on a live book.
         await trade.methods
-          .cancelOrder(
-            sideArg,
-            asBn(field(order, "client_order_id", "clientOrderId"))
+          .refreshPortfolio()
+          .accounts({ market, riskGroup, assetSlots, portfolio })
+          .instruction(),
+      ];
+      for (const order of ahead) {
+        ixs.push(
+          await trade.methods
+            .cancelOrder(
+              sideArg,
+              asBn(field(order, "client_order_id", "clientOrderId"))
+            )
+            .accounts({
+              trader: maker.publicKey,
+              session: null,
+              market,
+              book,
+              portfolio,
+            })
+            .instruction()
+        );
+        // Remember enough to restore the venue ladder after this one fill.
+        removed.push(order);
+      }
+      ixs.push(
+        await trade.methods
+          .placeOrder(
+            oppositeArg,
+            { immediateOrCancel: {} },
+            target.price,
+            target.lots,
+            new BN(Date.now() % 1_000_000_000),
+            new BN(0),
+            false
           )
           .accounts({
             trader: maker.publicKey,
             session: null,
             market,
             book,
+            riskGroup,
+            assetSlots,
+            oracleState,
             portfolio,
           })
-          .rpc();
-        // Remember enough to restore the venue ladder after this one fill.
-        removed.push(order);
+          .instruction()
+      );
+      // Send raw, not through Anchor. On the rollup `.rpc()`/`sendAndConfirm`
+      // fail in their websocket confirm step with "Unknown action 'undefined'"
+      // even when the transaction landed — which turned every successful match
+      // into a retry, and the restore below then re-laid quotes over a fill
+      // that had already happened.
+      const tx = new Transaction().add(...ixs);
+      tx.feePayer = maker.publicKey;
+      tx.recentBlockhash = (await makerEr.getLatestBlockhash()).blockhash;
+      tx.sign(maker);
+      const sig = await makerEr.sendRawTransaction(tx.serialize(), {
+        skipPreflight: true,
+      });
+      // Confirm by polling — the same reason the send is raw.
+      let landed = false;
+      for (let i = 0; i < 20 && !landed; i++) {
+        await sleep(250);
+        const st = await makerEr.getSignatureStatus(sig).catch(() => null);
+        if (st?.value?.err) throw new Error(`tx failed: ${JSON.stringify(st.value.err)}`);
+        landed = Boolean(st?.value?.confirmationStatus);
       }
-
-      // Re-read after mutations. The selected user order must now be the exact
-      // head; otherwise a concurrent arrival/requote changed priority.
-      bk = await inspect.account.book.fetch(book);
-      if (Number(field(bk, "pending_count", "pendingCount")) !== 0)
-        return false;
-      const head = walk(target.side === "bid" ? bk.bids : bk.asks)[0];
-      if (!head || !sameOrder(head, target)) return false;
-
-      await trade.methods
-        .refreshPortfolio()
-        .accounts({ market, riskGroup, assetSlots, portfolio })
-        .rpc();
-      const sig = await trade.methods
-        .placeOrder(
-          oppositeArg,
-          { immediateOrCancel: {} },
-          target.price,
-          target.lots,
-          new BN(Date.now() % 1_000_000_000),
-          new BN(0),
-          false
-        )
-        .preInstructions([
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 800_000 }),
-        ])
-        .accounts({
-          trader: maker.publicKey,
-          session: null,
-          market,
-          book,
-          riskGroup,
-          assetSlots,
-          oracleState,
-          portfolio,
-        })
-        .rpc();
+      if (!landed) throw new Error("match tx not confirmed in 5s");
 
       matched++;
       firstSeen.delete(target.key);
@@ -346,7 +404,7 @@ async function main() {
       for (const side of ["bid", "ask"] as const) {
         const userOrders: Candidate[] = [];
         for (const order of walk(side === "bid" ? bk.bids : bk.asks)) {
-          if (new PublicKey(order.trader).equals(maker.publicKey)) continue;
+          if (isVenue(order.trader)) continue;
           const target = candidate(marketId, side, order);
           userOrders.push(target);
           seen.add(target.key);

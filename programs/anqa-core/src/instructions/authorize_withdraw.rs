@@ -71,11 +71,10 @@ pub struct AuthorizeWithdraw<'info> {
 }
 
 pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
-    // Receipts and the ledger are group-scoped; the portfolio is
-    // market-scoped (isolated margin).
-    let market_id = ctx.accounts.market.group_id;
-    let market_id_bytes = market_id.to_le_bytes();
-    let portfolio_market_bytes = ctx.accounts.market.market_id.to_le_bytes();
+    // Receipts, the ledger and the portfolio are all group-scoped — one
+    // hub-wide account per trader, the derivation every client uses.
+    let group_id = ctx.accounts.market.group_id;
+    let group_id_bytes = group_id.to_le_bytes();
 
     let mut receipt: WithdrawReceipt = {
         let data = ctx.accounts.receipt.try_borrow_data()?;
@@ -84,12 +83,12 @@ pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
     // The receipt names its owner; verify this account *is* that owner's
     // receipt, and that the portfolio is that owner's portfolio.
     let (expected_receipt, _) = Pubkey::find_program_address(
-        &[WITHDRAW_RECEIPT_SEED, &portfolio_market_bytes, receipt.owner.as_ref()],
+        &[WITHDRAW_RECEIPT_SEED, &group_id_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
     require_keys_eq!(ctx.accounts.receipt.key(), expected_receipt, AnqaError::NotOrderOwner);
     let (expected_portfolio, _) = Pubkey::find_program_address(
-        &[PORTFOLIO_SEED, &portfolio_market_bytes, receipt.owner.as_ref()],
+        &[PORTFOLIO_SEED, &group_id_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
     require_keys_eq!(
@@ -150,8 +149,8 @@ pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
         ctx.accounts.market.key(),
         ctx.accounts.receipt.key(),
         &receipt,
-        &portfolio_market_bytes,
-        &market_id_bytes,
+        &group_id_bytes,
+        &group_id_bytes,
     );
     MagicIntentBundleBuilder::new(
         ctx.accounts.payer.to_account_info(),
@@ -163,7 +162,7 @@ pub fn handler(ctx: Context<AuthorizeWithdraw>) -> Result<()> {
     .build_and_invoke()?;
 
     emit!(WithdrawAuthorized {
-        market_id,
+        market_id: group_id,
         owner: receipt.owner,
         requested: amount,
         authorized,
@@ -181,12 +180,12 @@ fn build_settle_action<'info>(
     market: Pubkey,
     receipt_key: Pubkey,
     receipt: &WithdrawReceipt,
-    // Isolated margin: the ledger is market-scoped, custody stays hub-wide.
-    ledger_market_bytes: &[u8; 8],
+    // Both group-scoped: one hub-wide ledger per trader, one hub-wide vault.
+    ledger_group_bytes: &[u8; 8],
     vault_group_bytes: &[u8; 8],
 ) -> CallHandler<'info> {
     let (ledger, _) = Pubkey::find_program_address(
-        &[LEDGER_SEED, ledger_market_bytes, receipt.owner.as_ref()],
+        &[LEDGER_SEED, ledger_group_bytes, receipt.owner.as_ref()],
         &crate::ID,
     );
     let (vault, _) = Pubkey::find_program_address(&[VAULT_SEED, vault_group_bytes], &crate::ID);

@@ -9,9 +9,13 @@ test-ledger
 # vendored percolator builds into the workspace target dir
 vendor/percolator/target
 
-# Demo venue keys and mints (devnet play money)
+# Demo venue keys and mints (devnet play money). These are secret keys: the
+# repo is public, and whoever holds the maker key can cancel the venue's whole
+# ladder while someone is looking at the live demo.
 app/.demo-*.json
 app/.diag-*.json
+app/.mm-maker-*.json
+app/.verify-user.json
 
 # Local maker state and provisioning output
 app/.maker-funded-*
@@ -21,3 +25,9 @@ app/.provision*.log
 # Keeper and feed-pusher logs from the local demo venue
 app/.keeper-*.log
 app/.push-feed.log
+.vercel
+
+# Local venue run logs
+app/.auto-match.log
+app/.maker-daemon.log
+app/.run-keepers.log

@@ -130,8 +130,10 @@ pub fn handler(
     // runs the rollup leg itself the moment the delegation lands; without it a
     // keeper (or the trader's client) submits `authorize_withdraw` to the
     // rollup directly — the instruction is permissionless either way.
-    let market_id_bytes = market_id.to_le_bytes();
-    let receipt_seeds: &[&[u8]] = &[WITHDRAW_RECEIPT_SEED, &market_id_bytes, trader.as_ref()];
+    // The receipt PDA is group-scoped (one hub-wide account per trader), the
+    // same derivation the account constraint above and every client use.
+    let group_id_bytes = group_id.to_le_bytes();
+    let receipt_seeds: &[&[u8]] = &[WITHDRAW_RECEIPT_SEED, &group_id_bytes, trader.as_ref()];
     let trader_info = ctx.accounts.trader.to_account_info();
     let receipt_info = ctx.accounts.receipt.to_account_info();
     let owner_program_info = ctx.accounts.owner_program.to_account_info();
@@ -186,10 +188,12 @@ fn write_fresh_receipt(ctx: &Context<RequestWithdraw>, receipt: &WithdrawReceipt
     let info = ctx.accounts.receipt.to_account_info();
     require!(info.data_is_empty(), AnqaError::ReceiptAlreadyProcessed);
 
-    let market_id_bytes = receipt.market_id.to_le_bytes();
+    // Must mirror the account constraint's derivation exactly: the receipt is
+    // group-scoped, and `ctx.bumps.receipt` is the bump for THAT derivation.
+    let group_id_bytes = ctx.accounts.market.group_id.to_le_bytes();
     let signer_seeds: &[&[&[u8]]] = &[&[
         WITHDRAW_RECEIPT_SEED,
-        &market_id_bytes,
+        &group_id_bytes,
         receipt.owner.as_ref(),
         &[receipt.bump],
     ]];
@@ -248,14 +252,10 @@ fn build_authorize_ix(
         Pubkey::find_program_address(&[RISK_GROUP_SEED, &market_id_bytes], &crate::ID);
     let (asset_slots, _) =
         Pubkey::find_program_address(&[ASSET_SLOTS_SEED, &market_id_bytes], &crate::ID);
-    // Isolated margin: the withdrawal is judged against THIS market's
-    // portfolio — the only pot this market's positions can draw on.
+    // The portfolio is group-scoped like the receipt and ledger — one
+    // hub-wide account per trader, the derivation every client uses.
     let (portfolio, _) = Pubkey::find_program_address(
-        &[
-            PORTFOLIO_SEED,
-            &ctx.accounts.market.market_id.to_le_bytes(),
-            trader.as_ref(),
-        ],
+        &[PORTFOLIO_SEED, &market_id_bytes, trader.as_ref()],
         &crate::ID,
     );
     let metas = __client_accounts_authorize_withdraw::AuthorizeWithdraw {

@@ -603,7 +603,9 @@ export async function requestWithdraw(
     .requestWithdraw(amount, false)
     .accounts({
       trader: c.owner,
-      market: c.acc.market,
+      // Hub market: the whole withdraw lifecycle is hub-scoped (see
+      // `authorizeWithdraw`), and all three legs must agree on the derivation.
+      market: c.acc.groupMarket,
       ledger: c.acc.ledgerOf(c.owner),
       payoutTo: getAssociatedTokenAddressSync(mint, c.owner),
       receipt,
@@ -617,13 +619,21 @@ export async function requestWithdraw(
     .rpc();
 }
 
-/** Rollup: the kernel's verdict, then the receipt goes home. */
+/**
+ * Rollup: the kernel's verdict, then the receipt goes home.
+ *
+ * Named against the HUB market, not the selected one. Custody is hub-scoped —
+ * one ledger, one receipt, one portfolio per trader — and the program derives
+ * those PDAs from the market account it is handed. Passing a listing whose id
+ * is not the group id makes it look for a receipt that does not exist, which
+ * failed as `NotOrderOwner` on every market except the hub itself.
+ */
 export async function authorizeWithdraw(p: Program, c: Ctx) {
   return p.methods
     .authorizeWithdraw()
     .accounts({
       payer: c.owner,
-      market: c.acc.market,
+      market: c.acc.groupMarket,
       riskGroup: c.acc.riskGroup,
       assetSlots: c.acc.assetSlots,
       portfolio: c.acc.portfolioOf(c.owner),
@@ -634,12 +644,12 @@ export async function authorizeWithdraw(p: Program, c: Ctx) {
     .rpc();
 }
 
-/** Base: pay out. Signerless — anyone may drive it. */
+/** Base: pay out. Signerless — anyone may drive it. Hub-scoped, as above. */
 export async function settleWithdraw(p: Program, c: Ctx, mint: PublicKey) {
   return p.methods
     .settleWithdraw()
     .accounts({
-      market: c.acc.market,
+      market: c.acc.groupMarket,
       ledger: c.acc.ledgerOf(c.owner),
       receipt: c.acc.withdrawReceiptOf(c.owner),
       owner: c.owner,
