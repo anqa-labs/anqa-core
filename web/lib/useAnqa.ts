@@ -85,7 +85,13 @@ const EMPTY: VenueState = {
  * a delegated account only answers from inside, an undelegated one only from
  * outside, and the terminal should not care which phase the venue is in.
  */
-export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 500) {
+// 2s, not 500ms. This is the one hook that falls back to the BASE layer, so
+// every open tab spends the venue's base-RPC budget four times over at 500ms
+// — and the keeper is competing for the same quota to settle fills. Balances
+// and marks do not move fast enough for anyone to notice the difference; the
+// order book (useDepth) is what makes the terminal feel live, and that still
+// reads the rollup, which is not rate limited.
+export function useAnqa(mid: number = DEFAULT_MARKET_ID, pollMs = 2000) {
   const wallet = useAnchorWallet();
   const [state, setState] = useState<VenueState>(EMPTY);
   const busy = useRef(false);

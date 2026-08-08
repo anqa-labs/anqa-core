@@ -30,8 +30,44 @@ Three caveats that are structural, not bugs:
    `commit_frequency_ms = u32::MAX` is what holds this. Do not "fix" it.
 2. The permission record itself is public. Anyone can see *that* the book is
    private and *who* may read it. Only contents are hidden.
-3. It is a **read filter, not an execution guard**. Every authorization rule
-   (who may cancel, who may close) must stay in the program.
+3. At the enclave-runtime level it is a read filter, not an execution guard, so
+   every authorization rule (who may cancel, who may close) still stays in the
+   program. **But at the RPC ingress it is stronger than "read filter" implies:**
+   the TEE gates all access by an authenticated session (a JWT bound to a keypair
+   by challenge-signature, `app/tee-auth.ts`), and any transaction that so much as
+   *references* a private account is refused **403 at ingress, before execution**,
+   unless the caller's session proves permission-membership. Verified adversarially
+   2026-08-07 — see below.
+
+## The CPI-exfil question, settled (2026-08-07)
+
+A reviewer asked: the TEE hides private accounts from RPC reads, but what stops
+someone running their own program that CPI-reads the account and copies the bytes
+out? Tested live and end to end (`app/privacy-boundary.ts`, reader program source
+in `programs/anqa-reader`, deployed to devnet at
+`Are1Rg5BRvuzxFYHCFZkFoGAiaXF78Rhd5i8MNxJBzPv`):
+
+- A freshly-deployed, non-builtin program **does** clone and execute inside the
+  rollup — proven by running it against public accounts, where it reads their real
+  bytes. So the ER does not refuse unknown programs.
+- The same program invoked against a **private** account by a non-member — with a
+  real signed `sendTransaction` and the attacker's own minted session token — is
+  refused **403 at ingress; it never executes**. Same for `simulateTransaction`
+  (403 for everyone, since a simulation would expose state). The identical real
+  submit against a **public** account is admitted (200), so the block is
+  privacy-specific.
+
+Conclusion: the Query Filtering Service is **admission control keyed to session
+membership**, not merely a read-response filter. To CPI-read a private account you
+must get a transaction naming it admitted (SVM requires the account be in the tx's
+account list), and ingress refuses that to anyone who cannot sign as a member.
+
+Claim the guarantee honestly as **confidential under an attested TEE**: the single
+delegated validator is the only executor for these accounts and enforces the
+membership check, bounded by TDX remote attestation. It is **not** cryptographic
+secrecy — the enclave sees plaintext to run matching and liquidation, so enclave
+compromise or an operator bypassing ingress at the process level would expose
+state. No MagicBlock allowlist was needed; the ingress guard already exists.
 
 ## Live venue
 

@@ -75,6 +75,32 @@ Verified end to end by `app/dry-run.ts`:
 [7] book owner is now: DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh
 ```
 
+## Privacy, proven adversarially
+
+The claim is not "positions are hidden from a naive RPC read." It is stronger and
+was tested against an attacker: on the TEE validator, any transaction that so much
+as *references* a private account is refused **403 at ingress, before it executes**,
+unless the caller's authenticated session proves permission-membership.
+
+We deployed a purpose-built "attacker" program to devnet (source in
+`programs/anqa-reader`) that reads whatever account it is handed. It **does**
+execute inside the rollup against public accounts. Against a private book or
+portfolio, a real signed submit from a non-member — using the attacker's own minted
+session token — is blocked at ingress and never runs; the identical submit against a
+public account is admitted. So the CPI-read-and-copy-out exfiltration path is closed
+at the ingress, not merely filtered on the way back.
+
+```bash
+npm run privacy:boundary   # reproduces the four checks against live devnet
+```
+
+Stated honestly, this is **confidential under an attested TEE** — the single
+delegated validator is the only executor for these accounts and enforces the
+membership check, bounded by TDX remote attestation. It is not cryptographic
+secrecy: the enclave sees plaintext to run matching and liquidation. What becomes
+public is the fill on the tape, and the aggregate depth mirror — never the resting
+orders, positions, or liquidation prices.
+
 ## Layout
 
 ```

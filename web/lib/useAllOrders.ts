@@ -31,7 +31,9 @@ export type CrossOrder = {
  * to remember what they left resting. One batched rollup read covers all
  * books; each is walked in priority order and filtered to this wallet.
  */
-export function useAllOrders(pollMs = 500): CrossOrder[] {
+// A resting order changes only when it fills or is cancelled, and a fill
+// takes seconds — polling this eight times in that window buys nothing.
+export function useAllOrders(pollMs = 1500): CrossOrder[] {
   const wallet = useAnchorWallet();
   const [rows, setRows] = useState<CrossOrder[]>([]);
   const busy = useRef(false);
