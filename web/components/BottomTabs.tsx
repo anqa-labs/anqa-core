@@ -6,13 +6,16 @@ import { PublicKey } from "@solana/web3.js";
 import { Button } from "./ui";
 import { readableError } from "@/lib/anqa";
 import {
+  addCollateral,
   cancelAll,
   cancelOrder,
   cancelTrigger,
   closePosition,
   grantSessionOnly,
   placeTrigger,
+  removeCollateral,
 } from "@/lib/actions";
+import { ManageMarginModal } from "./ManageMarginModal";
 import { anqaAccounts, lotFraction, ticksToUsd, usdToTicks } from "@/lib/anqa";
 import { walletUsdc } from "@/lib/margin";
 import { MARKETS } from "@/lib/markets";
@@ -207,6 +210,43 @@ export function BottomTabs({
     }
   };
 
+  // Re-margin a live position: isolated margin's missing lever. One rollup
+  // send, no tokens; the program re-checks everything against the live mark.
+  const [managing, setManaging] = useState<CrossPosition | null>(null);
+  const manageMargin = async (
+    row: CrossPosition,
+    mode: "add" | "remove",
+    usd: number
+  ) => {
+    if (!owner) return;
+    const acc = anqaAccounts(new BN(row.market.id), new BN(row.market.groupId));
+    setBusy(`${mode === "add" ? "Adding" : "Removing"} margin`);
+    try {
+      const { program, extra } = await requireTradingSession();
+      const ctx = {
+        acc,
+        marketId: new BN(row.market.id),
+        owner,
+        engine: owner,
+        ...extra,
+      };
+      const amount = new BN(Math.round(usd * 1e6));
+      if (mode === "add") await addCollateral(program, ctx, amount);
+      else await removeCollateral(program, ctx, amount);
+      setManaging(null);
+      onDone(
+        `$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${
+          mode === "add" ? "added to" : "removed from"
+        } ${row.market.symbol} margin`
+      );
+      anqa.refresh();
+    } catch (e: any) {
+      onDone(readableError(e), true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   // The trader's whole book of risk — every market, one table. Margin is
   // isolated per market on-chain; the view should not be.
   const allPositions = useAllPositions();
@@ -368,6 +408,7 @@ export function BottomTabs({
                     closing={closing.has(row.market.id)}
                     onGoto={() => onSelectMarket(row.market.id)}
                     onClose={() => closeAndReturn(row)}
+                    onManage={() => setManaging(row)}
                   />
                 ))}
               </>
@@ -428,6 +469,15 @@ export function BottomTabs({
           )}
         </div>
       </div>
+      {managing && (
+        <ManageMarginModal
+          row={managing}
+          anqa={anqa}
+          busy={busy}
+          onSubmit={(mode, usd) => manageMargin(managing, mode, usd)}
+          onClose={() => setManaging(null)}
+        />
+      )}
     </section>
   );
 }
@@ -952,12 +1002,14 @@ function PositionRow({
   closing,
   onClose,
   onGoto,
+  onManage,
 }: {
   row: CrossPosition;
   busy: string | null;
   closing: boolean;
   onClose: () => void;
   onGoto: () => void;
+  onManage: () => void;
 }) {
   const live = usePythLive(row.market.pythFeedId);
   const displayMark = live ?? row.mark;
@@ -1036,6 +1088,15 @@ function PositionRow({
         })}
       </span>
       <span className="text-right">
+        {/* Flash-style margin editor: the one lever isolated margin gives a
+            live position — move its liquidation price by re-margining. */}
+        <button
+          disabled={!!busy || closing}
+          onClick={onManage}
+          className="h-6 px-2.5 mr-1.5 rounded border border-line text-[10px] font-medium text-text hover:bg-raised hover:text-bright transition-colors disabled:opacity-40"
+        >
+          Margin
+        </button>
         <button
           disabled={!!busy || row.mark === null || closing}
           onClick={onClose}

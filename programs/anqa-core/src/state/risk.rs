@@ -271,6 +271,49 @@ impl Portfolio {
         }
     }
 
+    /// Take `amount` back out from behind `asset_index`. When the slot reaches
+    /// zero the blended entry goes with it, mirroring `take_collateral` — a
+    /// slot with no collateral must not keep a stale entry for the next fill
+    /// to blend against.
+    pub fn remove_collateral(&mut self, asset_index: u32, amount: u128) {
+        if let Some(slot) = self.asset_collateral.get_mut(asset_index as usize) {
+            let remaining = u128::from_le_bytes(*slot).saturating_sub(amount);
+            *slot = remaining.to_le_bytes();
+            if remaining == 0 {
+                if let Some(e) = self.asset_entry.get_mut(asset_index as usize) {
+                    *e = [0u8; 16];
+                }
+            }
+        }
+    }
+
+    /// Everything committed behind positions across all assets, in quote atoms.
+    pub fn total_committed_collateral(&self) -> u128 {
+        self.asset_collateral
+            .iter()
+            .fold(0u128, |acc, b| acc.saturating_add(u128::from_le_bytes(*b)))
+    }
+
+    /// Free collateral available to *commit* behind a position: equity minus
+    /// resting-order reservations minus everything already committed.
+    ///
+    /// Deliberately stricter than `free_margin`, which subtracts the kernel's
+    /// certified initial requirement rather than anqa's isolated commitments.
+    /// The kernel knows nothing of `asset_collateral`, so measuring top-ups
+    /// against `free_margin` would let a trader commit the same equity twice
+    /// and inflate a position's isolated health past what the account holds.
+    /// Only meaningful straight after a refresh, like `certified`.
+    pub fn free_for_commit(&self) -> Result<u128> {
+        let (equity, _) = self.certified()?;
+        if equity <= 0 {
+            return Ok(0);
+        }
+        let committed = self
+            .total_committed_collateral()
+            .saturating_add(self.reserved());
+        Ok((equity as u128).saturating_sub(committed))
+    }
+
     /// Release everything behind `asset_index` — the position is gone. Returns
     /// what was released so the caller can credit it back.
     pub fn take_collateral(&mut self, asset_index: u32) -> u128 {

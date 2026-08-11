@@ -507,6 +507,18 @@ pub mod anqa_core {
         instructions::refresh_portfolio::handler(ctx)
     }
 
+    /// Commit free equity behind this market's open position, moving its
+    /// liquidation price away without touching the position itself.
+    pub fn add_collateral(ctx: Context<ManageCollateral>, amount: u128) -> Result<()> {
+        instructions::manage_collateral::add_handler(ctx, amount)
+    }
+
+    /// Take excess collateral back out from behind this market's position;
+    /// what remains must still clear initial margin at the live mark.
+    pub fn remove_collateral(ctx: Context<ManageCollateral>, amount: u128) -> Result<()> {
+        instructions::manage_collateral::remove_handler(ctx, amount)
+    }
+
     /// Create the protocol vault — venue revenue, held apart from both trader
     /// collateral and insurance.
     pub fn initialize_protocol_vault(

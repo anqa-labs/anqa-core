@@ -97,6 +97,14 @@ pub enum AnqaError {
     PositionOpen,
     #[msg("a reduce-only close is already pending settlement")]
     ClosePending,
+    #[msg("collateral amount must be non-zero")]
+    ZeroCollateralAmount,
+    #[msg("not enough free collateral to commit")]
+    InsufficientFreeCollateral,
+    #[msg("amount exceeds the collateral behind this position")]
+    RemovalExceedsCommitted,
+    #[msg("removal would leave the position below initial margin")]
+    CollateralRemovalUnsafe,
 }
 
 /// Bridge Percolator's error type into Anchor's, preserving the kernel's reason

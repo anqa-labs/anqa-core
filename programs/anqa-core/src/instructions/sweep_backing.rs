@@ -1,3 +1,4 @@
+
 //! Expire a lapsed source-backing bucket — kernel maintenance, exposed.
 //!
 //! The kernel backs realized positive PnL with per-domain buckets that carry

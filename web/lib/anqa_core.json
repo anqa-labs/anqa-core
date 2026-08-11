@@ -155,6 +155,166 @@
       "args": []
     },
     {
+      "name": "add_collateral",
+      "docs": [
+        "Commit free equity behind this market's open position, moving its",
+        "liquidation price away without touching the position itself."
+      ],
+      "discriminator": [
+        127,
+        82,
+        121,
+        42,
+        161,
+        176,
+        249,
+        206
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner. Checked in the handler",
+            "via `trade_authorized`, like `place_order`."
+          ],
+          "optional": true
+        },
+        {
+          "name": "risk_group",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle_state",
+          "docs": [
+            "Read for `remove_collateral`'s margin check; never written. Removal",
+            "prices the position at the same guarded mark liquidation uses."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "portfolio",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u128"
+        }
+      ]
+    },
+    {
       "name": "adl",
       "docs": [
         "Auto-deleverage a profitable position — layer 4, reached only when",
@@ -8281,6 +8441,166 @@
       "args": []
     },
     {
+      "name": "remove_collateral",
+      "docs": [
+        "Take excess collateral back out from behind this market's position;",
+        "what remains must still clear initial margin at the live mark."
+      ],
+      "discriminator": [
+        86,
+        222,
+        130,
+        86,
+        92,
+        20,
+        72,
+        65
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "docs": [
+            "The portfolio owner, or a session key the owner granted."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "session",
+          "docs": [
+            "Present when a session key signs for the owner. Checked in the handler",
+            "via `trade_authorized`, like `place_order`."
+          ],
+          "optional": true
+        },
+        {
+          "name": "risk_group",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  114,
+                  105,
+                  115,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_slots",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  97,
+                  115,
+                  115,
+                  101,
+                  116,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.group_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle_state",
+          "docs": [
+            "Read for `remove_collateral`'s margin check; never written. Removal",
+            "prices the position at the same guarded mark liquidation uses."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  110,
+                  113,
+                  97,
+                  95,
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.market_id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "portfolio",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u128"
+        }
+      ]
+    },
+    {
       "name": "request_withdraw",
       "docs": [
         "Base layer: reserve collateral, open a withdrawal receipt, and delegate",
@@ -10114,6 +10434,32 @@
       ]
     },
     {
+      "name": "CollateralAdded",
+      "discriminator": [
+        172,
+        68,
+        58,
+        249,
+        157,
+        64,
+        74,
+        141
+      ]
+    },
+    {
+      "name": "CollateralRemoved",
+      "discriminator": [
+        38,
+        57,
+        214,
+        30,
+        121,
+        178,
+        129,
+        4
+      ]
+    },
+    {
       "name": "DepositClaimed",
       "discriminator": [
         119,
@@ -10612,6 +10958,26 @@
       "code": 6044,
       "name": "ClosePending",
       "msg": "a reduce-only close is already pending settlement"
+    },
+    {
+      "code": 6045,
+      "name": "ZeroCollateralAmount",
+      "msg": "collateral amount must be non-zero"
+    },
+    {
+      "code": 6046,
+      "name": "InsufficientFreeCollateral",
+      "msg": "not enough free collateral to commit"
+    },
+    {
+      "code": 6047,
+      "name": "RemovalExceedsCommitted",
+      "msg": "amount exceeds the collateral behind this position"
+    },
+    {
+      "code": 6048,
+      "name": "CollateralRemovalUnsafe",
+      "msg": "removal would leave the position below initial margin"
     }
   ],
   "types": [
@@ -10903,6 +11269,62 @@
                 2
               ]
             }
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollateralAdded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_index",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u128"
+          },
+          {
+            "name": "total",
+            "type": "u128"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollateralRemoved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market_id",
+            "type": "u64"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_index",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u128"
+          },
+          {
+            "name": "total",
+            "type": "u128"
           }
         ]
       }

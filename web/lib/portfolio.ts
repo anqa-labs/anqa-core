@@ -20,6 +20,23 @@ export const PF_ENTRY = PF_COLLATERAL + PF_MAX_ASSETS * 16;
 /** Where the kernel's own bytes start inside a raw portfolio account. */
 export const PF_INNER = PF_ENTRY + PF_MAX_ASSETS * 16;
 
+/** Margin reserved by resting orders (wrapper header field), in USD. */
+export const PF_RESERVED = 8 + 32 + 8 + 1; // u128 LE
+export function reservedOfRaw(data: Uint8Array): number {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  if (PF_RESERVED + 8 > data.length) return 0;
+  return Number(view.getBigUint64(PF_RESERVED, true)) / 1e6;
+}
+
+/** Everything committed behind positions across all assets, in USD. Mirrors
+ *  the program's `total_committed_collateral`, which is what `add_collateral`
+ *  measures a top-up against. */
+export function committedTotalRaw(data: Uint8Array): number {
+  let total = 0;
+  for (let i = 0; i < PF_MAX_ASSETS; i++) total += collateralOfRaw(data, i);
+  return total;
+}
+
 /** Collateral the trader put behind `assetIndex`, in USD. */
 export function collateralOfRaw(data: Uint8Array, assetIndex: number): number {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);

@@ -504,6 +504,43 @@ export async function closePosition(
     .rpc(ROLLUP);
 }
 
+/** Commit free equity behind this market's open position. Pure bookkeeping in
+ *  the rollup — no tokens move — and the liquidation price steps away the
+ *  moment it lands. */
+export async function addCollateral(p: Program, c: Ctx, amountAtoms: BN) {
+  return p.methods
+    .addCollateral(amountAtoms)
+    .accounts({
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
+      market: c.acc.market,
+      riskGroup: c.acc.riskGroup,
+      assetSlots: c.acc.assetSlots,
+      oracleState: c.acc.oracleState,
+      portfolio: c.acc.portfolioOf(c.owner),
+    } as never)
+    .rpc(ROLLUP);
+}
+
+/** Take excess collateral back out from behind this market's position. The
+ *  program refuses anything that would leave the remainder below initial
+ *  margin at the live mark; a flat slot (collateral stranded by an unfilled
+ *  order) drains freely. */
+export async function removeCollateral(p: Program, c: Ctx, amountAtoms: BN) {
+  return p.methods
+    .removeCollateral(amountAtoms)
+    .accounts({
+      trader: c.trader ?? c.owner,
+      session: c.session ?? null,
+      market: c.acc.market,
+      riskGroup: c.acc.riskGroup,
+      assetSlots: c.acc.assetSlots,
+      oracleState: c.acc.oracleState,
+      portfolio: c.acc.portfolioOf(c.owner),
+    } as never)
+    .rpc(ROLLUP);
+}
+
 /** Arm a stop / take-profit in a portfolio slot. */
 export async function placeTrigger(
   p: Program,
