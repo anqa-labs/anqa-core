@@ -465,7 +465,6 @@ function ComparisonSection() {
           </div>
           <div className="flex items-center gap-3 rounded-xl border border-line-soft bg-ink p-3">
             <Link href="/docs" className="rounded-lg px-4 py-3 text-[10px] font-medium text-phoenix hover:bg-phoenix/5">Read privacy model →</Link>
-            <a href="https://github.com/anqa-labs/anqa-core" target="_blank" rel="noreferrer" className="rounded-lg px-4 py-3 text-[10px] font-medium text-text hover:bg-surface">Inspect source ↗</a>
           </div>
         </div>
       </div>
@@ -511,14 +510,6 @@ function LandingNav() {
           <Link href="/docs" className="rounded-md px-3 py-2 text-[11px] text-muted hover:text-bright">
             Docs
           </Link>
-          <a
-            href="https://github.com/anqa-labs/anqa-core"
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-md px-3 py-2 text-[11px] text-muted hover:text-bright"
-          >
-            GitHub ↗
-          </a>
         </nav>
         <Link
           href="/trade"
@@ -749,7 +740,6 @@ function LandingFooter() {
         <div className="flex gap-5 sm:ml-auto">
           <Link href="/trade" className="hover:text-bright">Terminal</Link>
           <Link href="/docs" className="hover:text-bright">Docs</Link>
-          <a href="https://github.com/anqa-labs/anqa-core" target="_blank" rel="noreferrer" className="hover:text-bright">GitHub ↗</a>
         </div>
       </div>
     </footer>
