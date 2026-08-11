@@ -1,15 +1,24 @@
 /**
- * The mark: a bird reduced to the one thing you can still recognise it by —
- * the spread of a wing. Everything else is left out, which is the joke the
- * whole venue is built on.
+ * The mark: three feathers fanned from a single root — the old symmetric
+ * burst made directional. It ships as its own badge (black plume on a white
+ * chip) so it reads the same everywhere and is deliberately the one bright
+ * thing in a graphite header.
  */
 export function PhoenixMark({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 28 28" fill="none" className={className} aria-hidden="true">
-      <path
-        d="M14 3.5c1.9 3.2 4.6 5.2 8.2 6.1-2.5.9-4.3 2.2-5.6 3.9 2.4-.5 4.6-.2 6.6.9-3.1.6-5.5 2-7.2 4.2 1.9-.3 3.6 0 5.1.9-3.9.6-6.4 2.6-7.1 5.6-.7-3-3.2-5-7.1-5.6 1.5-.9 3.2-1.2 5.1-.9-1.7-2.2-4.1-3.6-7.2-4.2 2-1.1 4.2-1.4 6.6-.9-1.3-1.7-3.1-3-5.6-3.9 3.6-.9 6.3-2.9 8.2-6.1z"
-        fill="currentColor"
-      />
+    <svg viewBox="0 0 28 28" className={className} aria-hidden="true">
+      <rect x="0.5" y="0.5" width="27" height="27" rx="6.5" fill="#ffffff" />
+      <g fill="#0a0a0b" transform="translate(14 14) scale(0.78) translate(-12.2 -15.7)">
+        <path d="M5 24.5 C12 22 17.5 17.5 20 11 C19 18.5 13 23.5 5 24.5 Z" />
+        <path
+          d="M5 24.5 C12 22 17.5 17.5 20 11 C19 18.5 13 23.5 5 24.5 Z"
+          transform="rotate(-16 5 24.5)"
+        />
+        <path
+          d="M5 24.5 C12 22 17.5 17.5 20 11 C19 18.5 13 23.5 5 24.5 Z"
+          transform="rotate(-33 5 24.5)"
+        />
+      </g>
     </svg>
   );
 }
@@ -17,7 +26,7 @@ export function PhoenixMark({ className = "" }: { className?: string }) {
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
-      <PhoenixMark className="w-5 h-5 text-phoenix" />
+      <PhoenixMark className="w-5 h-5" />
       <div className="flex items-baseline gap-2">
         <span className="text-[19px] font-medium tracking-[0.14em] text-bright lowercase">
           anqa
