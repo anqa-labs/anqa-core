@@ -98,6 +98,17 @@ async function main() {
         ` ${String(b.n).padStart(4)} ${String(a.n).padStart(5)}` +
         ` ${String(bk.seq).padStart(4)} ${String(bk.fill_count ?? bk.fillCount).padStart(6)}` +
         ` ${String(bk.pending_count ?? bk.pendingCount).padStart(5)}   ${b.top} / ${a.top}`;
+      if (process.env.ANQA_DIAG_ORDERS === "1") {
+        for (const [sideName, side] of [["bid", bk.bids], ["ask", bk.asks]] as const) {
+          for (const order of (side?.orders ?? []).filter((o: any) => o.active === 1)) {
+            console.log(
+              `        ${sideName} owner=${new PublicKey(order.trader).toBase58()}` +
+              ` price=${order.priceInTicks} lots=${order.baseLots}` +
+              ` client=${order.clientOrderId} hidden=${order.hidden}`
+            );
+          }
+        }
+      }
     } catch (e: any) {
       row += `  book unreadable: ${String(e.message ?? e).slice(0, 60)}`;
     }

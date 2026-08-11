@@ -298,6 +298,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "anqa-reader"
+version = "0.1.0"
+dependencies = [
+ "solana-program 2.3.0",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"

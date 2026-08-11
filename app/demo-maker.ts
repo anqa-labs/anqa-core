@@ -41,6 +41,15 @@ const BTC_FEED = new PublicKey(
     : "4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo"
 );
 const DLP = new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh");
+// MagicBlock's access-control (permission) program. A portfolio with a
+// permission record reads `null` to non-members on the TEE; without one it is
+// served in full. The maker's portfolio must carry one, or the privacy demo
+// disproves itself the moment anyone reads the maker instead of a visitor.
+const ACL = new PublicKey("ACLseoPoyC3cBqoUtkbjZ4aDrkurZW86v19pXz2XQnp1");
+// = the venue keeper (admin). It must be a permission member so the isolated
+// liquidator can still read the maker's position; lock it out and liquidations
+// silently stop. See web/lib/actions.ts and anqa-portfolio-privacy memory.
+const ALL_FLAGS = 31;
 const RPC = process.env.ANQA_RPC ?? "https://api.devnet.solana.com";
 const ER_RPC = process.env.ANQA_ER_RPC ?? "https://devnet-tee.magicblock.app";
 const MARKET_ID = new BN(process.env.ANQA_DEMO_MARKET ?? 777);
@@ -211,7 +220,50 @@ async function main() {
     console.log("  ·  collateral already deposited");
   }
 
+  // Make the portfolio private BEFORE it is delegated. Ordering is the whole
+  // rule: a permission created on base layer before `delegate_portfolio`
+  // travels into the rollup and filters reads while still letting the owner and
+  // keeper trade; a permission created AFTER delegation bricks the account
+  // (403 at ingress on every instruction, including the owner's own close).
+  // So we only ever create it on an undelegated portfolio.
+  const permission = PublicKey.findProgramAddressSync(
+    [S("permission:"), portfolio.toBuffer()],
+    ACL
+  )[0];
   const isDelegated = (await conn.getAccountInfo(portfolio))?.owner?.equals(DLP) ?? false;
+  const permExists = (await conn.getAccountInfo(permission)) !== null;
+  if (!isDelegated && !permExists) {
+    await pBase.methods
+      .createPortfolioPermission(GROUP_ID, [
+        { pubkey: maker.publicKey, flags: ALL_FLAGS },
+        { pubkey: admin.publicKey, flags: ALL_FLAGS }, // venue keeper
+      ])
+      .accounts({
+        trader: maker.publicKey,
+        market: gpda("anqa_market"),
+        portfolio,
+        permission,
+        permissionProgram: ACL,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    await sleep(PACE);
+    console.log("  ✓  portfolio permissioned (private before delegation)");
+  } else if (isDelegated && !permExists) {
+    // The account is already in a session with no permission — it is
+    // world-readable and cannot be privatised in place (a post-delegation
+    // permission bricks it). Set ANQA_REPRIVATE=1 to undelegate → permission →
+    // re-delegate. Its current state is already public regardless.
+    console.log(
+      "  ⚠  portfolio delegated WITHOUT a permission — world-readable" +
+        (process.env.ANQA_REPRIVATE === "1"
+          ? "; ANQA_REPRIVATE=1 set, but automated re-privatise is not wired — undelegate manually first"
+          : "; set ANQA_REPRIVATE=1 to repair")
+    );
+  } else {
+    console.log("  ·  portfolio already private");
+  }
+
   if (!isDelegated) {
     const d = delegationOf(portfolio);
     await pBase.methods.delegatePortfolio(GROUP_ID)

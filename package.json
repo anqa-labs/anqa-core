@@ -3,7 +3,8 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "privacy:proof": "ts-node --transpile-only app/privacy-proof.ts"
+    "privacy:proof": "ts-node --transpile-only app/privacy-proof.ts",
+    "privacy:boundary": "ts-node --transpile-only app/privacy-boundary.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

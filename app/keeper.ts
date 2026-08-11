@@ -982,7 +982,15 @@ async function main() {
   setInterval(claimDeposits, 6_000);
   setInterval(() => guard("commit", checkpoint), 300_000);
 
-  for (const m of MK) scheduleRequote(m);
+  // The legacy watchdog re-spawns `app/demo-maker.ts` on drift — a full
+  // cancel/re-lay per requote. When the resident `app/maker-daemon.ts` is
+  // running it owns quoting instead, so set ANQA_NO_KEEPER_MAKER=1 to stop the
+  // keeper from spawning a competing maker on the same books.
+  if (process.env.ANQA_NO_KEEPER_MAKER === "1") {
+    log("maker", "keeper requote spawning disabled (resident daemon owns quoting)");
+  } else {
+    for (const m of MK) scheduleRequote(m);
+  }
   void guard("mtm-scan", scanHolders);
 
   process.on("SIGINT", () => {
