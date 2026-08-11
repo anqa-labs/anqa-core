@@ -23,24 +23,13 @@ export function PhoenixMark({ className = "" }: { className?: string }) {
   );
 }
 
-export function Wordmark({ compact = false }: { compact?: boolean }) {
+export function Wordmark() {
   return (
     <div className="flex items-center gap-2.5">
       <PhoenixMark className="w-5 h-5" />
-      <div className="flex items-baseline gap-2">
-        <span className="text-[19px] font-medium tracking-[0.14em] text-bright lowercase">
-          anqa
-        </span>
-        {!compact && (
-          <span
-            className="text-[15px] text-phoenix-soft/80 translate-y-[1px]"
-            lang="ar"
-            dir="rtl"
-          >
-            عنقاء
-          </span>
-        )}
-      </div>
+      <span className="text-[19px] font-medium tracking-[0.14em] text-bright lowercase">
+        anqa
+      </span>
     </div>
   );
 }

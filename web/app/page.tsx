@@ -744,7 +744,7 @@ function LandingFooter() {
   return (
     <footer className="border-t border-line-soft bg-ink">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-6 px-5 py-8 text-[10px] text-dim sm:flex-row sm:items-center md:px-8">
-        <Link href="/" aria-label="Anqa home"><Wordmark compact /></Link>
+        <Link href="/" aria-label="Anqa home"><Wordmark /></Link>
         <p>Private execution. Public evidence. Solana devnet.</p>
         <div className="flex gap-5 sm:ml-auto">
           <Link href="/trade" className="hover:text-bright">Terminal</Link>
